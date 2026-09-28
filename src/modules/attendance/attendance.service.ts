@@ -21,7 +21,7 @@ export class AttendanceService {
     const [employees, attendances, requests] = await Promise.all([
       WorkplaceMemberModel.find({
         workplaceId: workplace._id, role: 'EMPLOYEE', status: { $in: ['ACTIVE', 'INVITED'] },
-      }).select('name employeeCode').sort({ name: 1 }).lean(),
+      }).populate('userId', 'avatarUrl').select('name employeeCode userId').sort({ name: 1 }).lean(),
       AttendanceModel.find({ workplaceId: workplace._id, attendanceDate: todayDate })
         .select('employeeMemberId status checkInTime approvedAt source').lean(),
       AttendanceRequestModel.find({ workplaceId: workplace._id, attendanceDate: todayDate, status: 'PENDING' })
@@ -34,7 +34,7 @@ export class AttendanceService {
     let pendingCount = 0;
     let notMarkedCount = 0;
 
-    const roster = employees.map((emp) => {
+    const roster = employees.map((emp: any) => {
       const empId = emp._id.toString();
       const attendance = attendanceMap.get(empId);
       const pendingReq = pendingMap.get(empId);
@@ -60,6 +60,7 @@ export class AttendanceService {
         memberId: empId,
         name: emp.name,
         employeeCode: emp.employeeCode,
+        avatarUrl: emp.userId?.avatarUrl || undefined,
         status,
         checkInTime,
         approvedAt,

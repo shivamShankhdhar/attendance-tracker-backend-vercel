@@ -74,6 +74,106 @@ export class WorkplaceController {
       next(error);
     }
   }
+
+  // --- JOIN WORKPLACE VIA QR & APPROVAL FLOW ---
+
+  async getJoinQr(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const workplaceId = getParam(req, 'workplaceId');
+      const data = await workplaceService.getJoinQr(workplaceId);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async rotateJoinQr(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const workplaceId = getParam(req, 'workplaceId');
+      const data = await workplaceService.rotateJoinQr(workplaceId, req.user.userId);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async previewJoin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { token } = req.body;
+      const data = await workplaceService.previewJoin(req.user.userId, token);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async submitJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const result = await workplaceService.submitJoinRequest(req.user.userId, req.body);
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getMyJoinRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await workplaceService.getMyJoinRequests(req.user.userId);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async cancelMyJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const requestId = getParam(req, 'requestId');
+      const result = await workplaceService.cancelMyJoinRequest(req.user.userId, requestId);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getWorkplaceJoinRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const workplaceId = getParam(req, 'workplaceId');
+      const status = req.query.status as string | undefined;
+      const data = await workplaceService.getWorkplaceJoinRequests(workplaceId, status);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async approveJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const workplaceId = getParam(req, 'workplaceId');
+      const requestId = getParam(req, 'requestId');
+      const result = await workplaceService.approveJoinRequest(workplaceId, req.user.userId, requestId, req.body);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async rejectJoinRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const workplaceId = getParam(req, 'workplaceId');
+      const requestId = getParam(req, 'requestId');
+      const result = await workplaceService.rejectJoinRequest(workplaceId, req.user.userId, requestId, req.body);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const workplaceController = new WorkplaceController();

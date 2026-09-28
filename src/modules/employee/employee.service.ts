@@ -13,15 +13,18 @@ export class EmployeeService {
     const employees = await WorkplaceMemberModel.find({
       workplaceId: new Types.ObjectId(workplaceId),
       role: 'EMPLOYEE',
-    }).sort({ createdAt: -1 });
+    })
+      .populate('userId', 'avatarUrl')
+      .sort({ createdAt: -1 });
 
-    return employees.map((emp) => ({
+    return employees.map((emp: any) => ({
       id: emp._id.toString(),
       name: emp.name,
       employeeCode: emp.employeeCode,
       invitedEmail: emp.invitedEmail,
       status: emp.status,
       hasPin: Boolean(emp.pinHash),
+      avatarUrl: emp.userId?.avatarUrl || undefined,
       joinedAt: emp.joinedAt,
       createdAt: emp.createdAt,
     }));

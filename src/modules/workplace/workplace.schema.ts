@@ -20,3 +20,20 @@ export const createWorkplaceSchema = z.object({
 });
 
 export const updateWorkplaceSchema = createWorkplaceSchema.partial();
+
+export const joinPreviewSchema = z.object({
+  token: z.string().min(1, 'Join QR token is required'),
+});
+
+export const submitJoinRequestSchema = z.object({
+  token: z.string().min(1, 'Join QR token is required'),
+  note: z.string().max(200, 'Note must not exceed 200 characters').optional(),
+});
+
+export const approveJoinRequestSchema = z.object({
+  employeeCode: z.string().max(30).optional(),
+});
+
+export const rejectJoinRequestSchema = z.object({
+  reason: z.string().max(300).optional(),
+});

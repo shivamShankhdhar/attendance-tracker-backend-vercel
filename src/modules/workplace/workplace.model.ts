@@ -12,6 +12,8 @@ export interface IWorkplace extends Document {
     autoCloseHour: number;
   };
   status: 'ACTIVE' | 'INACTIVE';
+  joinQrSecret?: string;
+  joinQrEnabled?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,6 +29,8 @@ const workplaceSchema = new Schema<IWorkplace>(
       requireWifi: { type: Boolean, default: false },
       autoCloseHour: { type: Number, default: 23 },
     },
+    joinQrSecret: { type: String },
+    joinQrEnabled: { type: Boolean, default: true },
     status: {
       type: String,
       enum: ['ACTIVE', 'INACTIVE'],

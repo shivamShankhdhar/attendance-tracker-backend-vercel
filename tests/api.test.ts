@@ -9,6 +9,7 @@ import { WorkplaceMemberModel } from '../src/modules/employee/workplace-member.m
 import { AttendanceSessionModel } from '../src/modules/attendance-session/attendance-session.model';
 import { AttendanceRequestModel } from '../src/modules/attendance-request/attendance-request.model';
 import { AttendanceModel } from '../src/modules/attendance/attendance.model';
+import { WorkplaceJoinRequestModel } from '../src/modules/workplace/workplace-join-request.model';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 let server: http.Server;
@@ -371,4 +372,119 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     }
   });
 
+  test('14. Full QR join workspace flow: Employer generates Join QR -> Candidate scans & previews details -> Candidate submits join request -> Employer reviews & approves -> Candidate becomes active employee', async () => {
+    // 1. Create a candidate user account via dev mock exchange
+    const candidateAuthRes = await makeRequest('/api/v1/auth/google/exchange', {
+      method: 'POST',
+      body: {
+        idToken: 'mock-id-token',
+        devMockProfile: {
+          googleSub: 'candidate_qr_user_1',
+          name: 'Ananya Roy',
+          email: 'ananya.roy@test-suite.local',
+          picture: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330',
+        },
+      },
+    });
+    assert.equal(candidateAuthRes.status, 200);
+    const candidateToken = candidateAuthRes.body.data.accessToken;
+    const candidateUserId = candidateAuthRes.body.data.user.id;
+
+    // 2. Employer requests Workplace Join QR code
+    const joinQrRes = await makeRequest(`/api/v1/workplaces/${workplaceId}/join-qr`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${employerToken}` },
+    });
+    assert.equal(joinQrRes.status, 200);
+    assert.ok(joinQrRes.body.data.qrToken);
+    assert.ok(joinQrRes.body.data.qrPayload.startsWith('attendance://join?'));
+    const joinQrToken = joinQrRes.body.data.qrToken;
+
+    // 3. Candidate scans QR code and previews workplace & employer details
+    const previewRes = await makeRequest('/api/v1/workplaces/join-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+      body: { token: joinQrToken },
+    });
+    assert.equal(previewRes.status, 200);
+    assert.equal(previewRes.body.data.workplaceId, workplaceId);
+    assert.equal(previewRes.body.data.alreadyMember, false);
+    assert.equal(previewRes.body.data.pendingRequest, null);
+    assert.ok(previewRes.body.data.workplaceName);
+    assert.ok(previewRes.body.data.ownerName);
+
+    // 4. Candidate confirms details and submits join request
+    const joinReqRes = await makeRequest('/api/v1/workplaces/join-requests', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+      body: {
+        token: joinQrToken,
+        note: 'Joining as front desk receptionist',
+      },
+    });
+    assert.equal(joinReqRes.status, 201);
+    assert.equal(joinReqRes.body.data.status, 'PENDING');
+    const requestId = joinReqRes.body.data.requestId;
+
+    // 5. Candidate checking my-join-requests sees pending status
+    const myRequestsRes = await makeRequest('/api/v1/workplaces/my-join-requests', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+    });
+    assert.equal(myRequestsRes.status, 200);
+    const foundMyReq = myRequestsRes.body.data.find((r: any) => r.id === requestId);
+    assert.ok(foundMyReq);
+    assert.equal(foundMyReq.status, 'PENDING');
+
+    // 6. Duplicate join request is idempotent and returns existing request
+    const dupJoinRes = await makeRequest('/api/v1/workplaces/join-requests', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+      body: { token: joinQrToken },
+    });
+    assert.equal(dupJoinRes.status, 201);
+    assert.equal(dupJoinRes.body.data.requestId, requestId);
+
+    // 7. Employer views workplace join requests and sees Ananya's request
+    const employerRequestsRes = await makeRequest(`/api/v1/workplaces/${workplaceId}/join-requests?status=PENDING`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${employerToken}` },
+    });
+    assert.equal(employerRequestsRes.status, 200);
+    const candidateReq = employerRequestsRes.body.data.find((r: any) => r.id === requestId);
+    assert.ok(candidateReq);
+    assert.equal(candidateReq.name, 'Ananya Roy');
+    assert.equal(candidateReq.email, 'ananya.roy@test-suite.local');
+    assert.equal(candidateReq.note, 'Joining as front desk receptionist');
+
+    // 8. Employer approves the join request
+    const approveRes = await makeRequest(
+      `/api/v1/workplaces/${workplaceId}/join-requests/${requestId}/approve`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${employerToken}` },
+        body: { employeeCode: 'EMP-ANANYA' },
+      }
+    );
+    assert.equal(approveRes.status, 200);
+    assert.equal(approveRes.body.data.employeeCode, 'EMP-ANANYA');
+
+    // 9. Candidate now checks workplace list and is an ACTIVE EMPLOYEE
+    const candidateWorkplacesRes = await makeRequest('/api/v1/workplaces', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+    });
+    assert.equal(candidateWorkplacesRes.status, 200);
+    const joinedWp = candidateWorkplacesRes.body.data.find((w: any) => w.id === workplaceId);
+    assert.ok(joinedWp);
+    assert.equal(joinedWp.role, 'EMPLOYEE');
+    assert.equal(joinedWp.employeeCode, 'EMP-ANANYA');
+
+    // 10. Clean up test records
+    await WorkplaceJoinRequestModel.deleteMany({ workplaceId });
+    await WorkplaceMemberModel.deleteMany({ userId: candidateUserId });
+    await UserModel.deleteMany({ _id: candidateUserId });
+  });
+
 });
+

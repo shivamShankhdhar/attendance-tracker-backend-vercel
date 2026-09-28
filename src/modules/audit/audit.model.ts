@@ -10,7 +10,10 @@ export type AuditAction =
   | 'ATTENDANCE_SESSION_OPENED'
   | 'ATTENDANCE_SESSION_CLOSED'
   | 'INVITATION_CREATED'
-  | 'INVITATION_CLAIMED';
+  | 'INVITATION_CLAIMED'
+  | 'JOIN_REQUEST_SUBMITTED'
+  | 'JOIN_REQUEST_APPROVED'
+  | 'JOIN_REQUEST_REJECTED';
 
 export interface IAuditLog extends Document {
   _id: Types.ObjectId;
@@ -39,6 +42,9 @@ const auditLogSchema = new Schema<IAuditLog>(
         'ATTENDANCE_SESSION_CLOSED',
         'INVITATION_CREATED',
         'INVITATION_CLAIMED',
+        'JOIN_REQUEST_SUBMITTED',
+        'JOIN_REQUEST_APPROVED',
+        'JOIN_REQUEST_REJECTED',
       ],
       required: true,
       index: true,

@@ -170,7 +170,14 @@ export class AttendanceRequestService {
 
     const requests = await AttendanceRequestModel.find(filter)
       .sort({ requestedAt: -1 })
-      .populate('employeeMemberId', 'name employeeCode invitedEmail');
+      .populate({
+        path: 'employeeMemberId',
+        select: 'name employeeCode invitedEmail userId',
+        populate: {
+          path: 'userId',
+          select: 'avatarUrl',
+        },
+      });
 
     return requests.map((req: any) => ({
       id: req._id.toString(),
@@ -182,6 +189,7 @@ export class AttendanceRequestService {
         name: req.employeeMemberId?.name || 'Employee',
         code: req.employeeMemberId?.employeeCode,
         email: req.employeeMemberId?.invitedEmail,
+        avatarUrl: req.employeeMemberId?.userId?.avatarUrl || undefined,
       },
       verification: req.verification,
       rejectionReason: req.rejectionReason,
