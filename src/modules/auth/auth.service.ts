@@ -241,7 +241,24 @@ export class AuthService {
     const memberships = await WorkplaceMemberModel.find({
       $or: [{ userId: user._id }, ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : [])],
       status: { $in: ['ACTIVE', 'INVITED'] },
-    }).populate('workplaceId', 'name timezone address wifiSsid status');
+    }).populate('workplaceId', 'name timezone address wifiSsid status createdAt');
+
+    const mappedMemberships = memberships.map((m: any) => {
+      const wp = m.workplaceId;
+      const wpId = wp?._id?.toString() || m.workplaceId?.toString() || '';
+      return {
+        id: m._id.toString(),
+        workplaceId: wpId,
+        workplaceName: wp?.name || 'Workplace',
+        workplaceCode: wpId ? wpId.slice(-6).toUpperCase() : undefined,
+        address: wp?.address,
+        timezone: wp?.timezone || 'Asia/Kolkata',
+        role: m.role,
+        employeeCode: m.employeeCode,
+        status: m.status,
+        createdAt: wp?.createdAt || m.createdAt || new Date(),
+      };
+    }).sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
     return {
       user: {
@@ -252,15 +269,7 @@ export class AuthService {
         avatarUrl: user.avatarUrl,
         status: user.status,
       },
-      memberships: memberships.map((m: any) => ({
-        id: m._id.toString(),
-        workplaceId: m.workplaceId?._id?.toString() || m.workplaceId?.toString(),
-        workplaceName: m.workplaceId?.name || 'Workplace',
-        timezone: m.workplaceId?.timezone || 'Asia/Kolkata',
-        role: m.role,
-        employeeCode: m.employeeCode,
-        status: m.status,
-      })),
+      memberships: mappedMemberships,
     };
   }
 

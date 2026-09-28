@@ -58,18 +58,38 @@ export class WorkplaceService {
       status: 'ACTIVE',
     }).populate('workplaceId');
 
-    return members
-      .filter((m) => m.workplaceId && (m.workplaceId as any).status === 'ACTIVE')
-      .map((m: any) => ({
-        id: m.workplaceId._id.toString(),
-        name: m.workplaceId.name,
-        timezone: m.workplaceId.timezone,
-        address: m.workplaceId.address,
-        wifiSsid: m.workplaceId.wifiSsid,
-        role: m.role,
-        memberId: m._id.toString(),
-        employeeCode: m.employeeCode,
-      }));
+    const activeMembers = members.filter((m) => m.workplaceId && (m.workplaceId as any).status === 'ACTIVE');
+    const workplaceIds = activeMembers.map((m) => (m.workplaceId as any)._id);
+
+    const memberCounts = await WorkplaceMemberModel.aggregate([
+      { $match: { workplaceId: { $in: workplaceIds }, status: 'ACTIVE' } },
+      { $group: { _id: '$workplaceId', count: { $sum: 1 } } },
+    ]);
+    const countMap = new Map<string, number>();
+    for (const mc of memberCounts) {
+      countMap.set(mc._id.toString(), mc.count);
+    }
+
+    return activeMembers
+      .map((m: any) => {
+        const wp = m.workplaceId as any;
+        const wpIdStr = wp._id.toString();
+        return {
+          id: wpIdStr,
+          name: wp.name,
+          code: wpIdStr.slice(-6).toUpperCase(),
+          timezone: wp.timezone,
+          address: wp.address,
+          wifiSsid: wp.wifiSsid,
+          role: m.role,
+          memberId: m._id.toString(),
+          employeeCode: m.employeeCode,
+          memberCount: countMap.get(wpIdStr) || 1,
+          createdAt: wp.createdAt || m.createdAt,
+          joinedAt: m.joinedAt,
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
   /**
