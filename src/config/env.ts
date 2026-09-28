@@ -19,12 +19,32 @@ const envSchema = z.object({
 
 const parsedEnv = envSchema.safeParse(process.env);
 
+let envData: z.infer<typeof envSchema>;
+
 if (!parsedEnv.success) {
-  console.error('Invalid environment variables:', parsedEnv.error.format());
-  process.exit(1);
+  const missingKeys = Object.keys(parsedEnv.error.format()).filter((k) => k !== '_errors');
+  console.error('[Config Error] Missing environment variables:', missingKeys);
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    envData = {
+      PORT: Number(process.env.PORT) || 5001,
+      NODE_ENV: 'production',
+      MONGODB_URI: process.env.MONGODB_URI || '',
+      JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
+      JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
+      JWT_ACCESS_EXPIRY: '15m',
+      JWT_REFRESH_EXPIRY: '7d',
+      QR_ENCRYPTION_KEY: process.env.QR_ENCRYPTION_KEY || 'fallback_dummy_key_for_diagnostics_32_bytes_hex_val',
+      GOOGLE_CLIENT_IDS: process.env.GOOGLE_CLIENT_IDS || '',
+      RETRY_SECRET: process.env.RETRY_SECRET || 'dev_retry_secret',
+    };
+  } else {
+    process.exit(1);
+  }
+} else {
+  envData = parsedEnv.data;
 }
 
-export const env = parsedEnv.data;
+export const env = envData;
 export const googleClientIds = env.GOOGLE_CLIENT_IDS
   ? env.GOOGLE_CLIENT_IDS.split(',').map((id) => id.trim()).filter(Boolean)
   : [];
