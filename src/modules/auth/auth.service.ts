@@ -82,9 +82,40 @@ export class AuthService {
     // Auto-bind any pending workplace memberships for this verified email
     if (email) {
       await WorkplaceMemberModel.updateMany(
-        { invitedEmail: email, userId: { $exists: false }, status: 'INVITED' },
-        { $set: { userId: user._id } }
+        { invitedEmail: email, status: 'INVITED' },
+        { $set: { userId: user._id, status: 'ACTIVE' } }
       );
+    }
+
+    // Check if user has any memberships
+    const userMemberships = await WorkplaceMemberModel.find({
+      userId: user._id,
+      status: { $in: ['ACTIVE', 'INVITED'] },
+    });
+
+    // If first-time user with no workplace, auto-provision default workplace immediately!
+    // No tedious manual setup forms needed on sign up.
+    if (userMemberships.length === 0) {
+      const defaultName = `${user.name || 'My'}'s Workplace`;
+      const workplace = await WorkplaceModel.create({
+        name: defaultName,
+        ownerId: user._id,
+        timezone: 'Asia/Kolkata',
+        status: 'ACTIVE',
+        settings: {
+          allowSelfCheckIn: true,
+          requireWifiVerification: false,
+          requireLocationVerification: false,
+        },
+      });
+
+      await WorkplaceMemberModel.create({
+        workplaceId: workplace._id,
+        userId: user._id,
+        name: user.name || 'Owner',
+        role: 'EMPLOYER',
+        status: 'ACTIVE',
+      });
     }
 
     return this.buildAuthSession(user);
