@@ -37,15 +37,17 @@ authRouter.get('/google/callback', (req, res) => {
       margin: 0;
       background: #0F172A;
       color: #FFFFFF;
+      padding: 16px;
+      box-sizing: border-box;
     }
     .box {
       text-align: center;
-      padding: 36px 28px;
+      padding: 32px 24px;
       background: #1E293B;
       border: 1px solid #334155;
       border-radius: 20px;
-      max-width: 340px;
-      width: 90%;
+      max-width: 380px;
+      width: 100%;
       box-shadow: 0 10px 30px rgba(0,0,0,0.4);
     }
     .spinner {
@@ -55,50 +57,119 @@ authRouter.get('/google/callback', (req, res) => {
       width: 40px;
       height: 40px;
       animation: spin 0.8s linear infinite;
-      margin: 0 auto 20px;
+      margin: 0 auto 16px;
     }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     h2 { margin: 0 0 8px 0; font-size: 19px; font-weight: 700; }
-    p { margin: 0; font-size: 13.5px; color: #94A3B8; line-height: 1.5; }
+    p { margin: 0 0 16px 0; font-size: 13.5px; color: #94A3B8; line-height: 1.5; }
     .btn {
-      display: inline-block;
-      margin-top: 20px;
-      padding: 10px 20px;
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 12px;
+      padding: 12px 20px;
       background: #2563EB;
       color: #fff;
       text-decoration: none;
-      border-radius: 10px;
-      font-weight: 600;
-      font-size: 14px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 15px;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-secondary {
+      background: #334155;
+      color: #E2E8F0;
+      font-size: 13.5px;
+      padding: 10px 16px;
+    }
+    .token-box {
+      margin-top: 14px;
+      background: #0F172A;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 11px;
+      color: #38BDF8;
+      word-break: break-all;
+      max-height: 80px;
+      overflow-y: auto;
+      text-align: left;
     }
   </style>
 </head>
 <body>
   <div class="box">
     <div class="spinner"></div>
-    <h2>Signing you in...</h2>
-    <p>Redirecting you back to QuickAttendance</p>
-    <a id="fallback-btn" href="#" class="btn" style="display:none;">Return to App</a>
+    <h2>Authenticated!</h2>
+    <p id="status-text">Returning you to the Attendance Tracker app...</p>
+    <a id="fallback-btn" href="#" class="btn">Return to App</a>
+    <button id="copy-btn" class="btn btn-secondary" onclick="copyToken()">📋 Copy Token & Return</button>
+    <div id="token-display" class="token-box" style="display:none;"></div>
   </div>
   <script>
+    var globalToken = "";
     (function() {
       var hash = window.location.hash ? window.location.hash.substring(1) : '';
       var search = window.location.search ? window.location.search.substring(1) : '';
-      var params = hash || search;
-      var quickUrl = "quickattendance://auth?" + params;
-      var frontUrl = "frontend://auth?" + params;
+      var raw = hash || search;
+      var params = new URLSearchParams(raw);
+      var stateParam = params.get('state');
+      var idToken = params.get('id_token');
+      if (idToken) {
+        globalToken = idToken;
+        var tokenEl = document.getElementById('token-display');
+        if (tokenEl) {
+          tokenEl.innerText = idToken;
+          tokenEl.style.display = 'block';
+        }
+      }
+
+      var targetReturnUrl = '';
+      if (stateParam) {
+        try {
+          var decoded = decodeURIComponent(stateParam);
+          if (decoded.startsWith('exp://') || decoded.startsWith('quickattendance://') || decoded.startsWith('frontend://') || decoded.startsWith('http')) {
+            targetReturnUrl = decoded;
+          }
+        } catch(e) {}
+      }
+
+      if (!targetReturnUrl) {
+        targetReturnUrl = "quickattendance://auth";
+      }
+
+      var sep = targetReturnUrl.includes('?') ? '&' : (targetReturnUrl.includes('#') ? '&' : '?');
+      var finalAppUrl = targetReturnUrl + sep + raw;
       
       var btn = document.getElementById('fallback-btn');
       if (btn) {
-        btn.href = quickUrl;
+        btn.href = finalAppUrl;
       }
 
-      window.location.replace(quickUrl);
+      // Automatically trigger navigation
+      window.location.href = finalAppUrl;
+
+      // Fallback secondary attempts
       setTimeout(function() {
-        window.location.replace(frontUrl);
-        if (btn) btn.style.display = 'inline-block';
-      }, 500);
+        if (targetReturnUrl.startsWith('exp://')) {
+          window.location.href = finalAppUrl;
+        } else {
+          window.location.href = "quickattendance://auth?" + raw;
+        }
+      }, 600);
     })();
+
+    function copyToken() {
+      if (globalToken) {
+        navigator.clipboard.writeText(globalToken).then(function() {
+          alert('Token copied! Switch back to Attendance Tracker and tap "Paste Token"');
+        }).catch(function() {
+          alert('Token copied!');
+        });
+      }
+    }
   </script>
 </body>
 </html>`);
