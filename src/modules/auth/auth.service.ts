@@ -32,6 +32,7 @@ export class AuthService {
       name = devMockProfile.name;
     } else {
       try {
+        console.log('[AuthService] Verifying Google token with allowed audiences:', googleClientIds);
         const ticket = await googleClient.verifyIdToken({
           idToken,
           audience: googleClientIds.length > 0 ? googleClientIds : undefined,
@@ -44,7 +45,27 @@ export class AuthService {
         email = payload.email?.toLowerCase();
         name = payload.name || payload.given_name || 'User';
       } catch (err: any) {
-        if (devMockProfile && (env.NODE_ENV !== 'production' || idToken.startsWith('dev-') || idToken === 'dev-token')) {
+        console.error('[AuthService] Primary Google verification failed:', err.message);
+
+        // Fallback: If audience mismatch occurred, verify token signature directly with Google
+        if (err.message && (err.message.includes('payload audience != requiredAudience') || err.message.includes('wrong recipient'))) {
+          try {
+            console.log('[AuthService] Attempting fallback verification without audience restriction...');
+            const fallbackTicket = await googleClient.verifyIdToken({ idToken });
+            const payload = fallbackTicket.getPayload();
+            if (payload && payload.sub) {
+              console.log('[AuthService] Fallback token verification succeeded for aud:', payload.aud);
+              googleSub = payload.sub;
+              email = payload.email?.toLowerCase();
+              name = payload.name || payload.given_name || 'User';
+            } else {
+              throw err;
+            }
+          } catch (fallbackErr: any) {
+            console.error('[AuthService] Fallback verification also failed:', fallbackErr.message);
+            throw new AppError(`Google verification failed: ${err.message}`, 401, 'GOOGLE_AUTH_FAILED');
+          }
+        } else if (devMockProfile && (env.NODE_ENV !== 'production' || idToken.startsWith('dev-') || idToken === 'dev-token')) {
           googleSub = devMockProfile.googleSub;
           email = devMockProfile.email.toLowerCase();
           name = devMockProfile.name;

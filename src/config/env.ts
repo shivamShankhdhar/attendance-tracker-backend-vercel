@@ -45,6 +45,17 @@ if (!parsedEnv.success) {
 }
 
 export const env = envData;
-export const googleClientIds = env.GOOGLE_CLIENT_IDS
-  ? env.GOOGLE_CLIENT_IDS.split(',').map((id) => id.trim()).filter(Boolean)
-  : [];
+
+const KNOWN_GOOGLE_CLIENT_IDS = [
+  '667573150359-4cff25jgf98hqq00pdrnojslk4bri5sb.apps.googleusercontent.com',
+  '771745956735-dt868k5lrced43dicn5ifeh54la1djc7.apps.googleusercontent.com',
+];
+
+export const googleClientIds = Array.from(
+  new Set([
+    ...KNOWN_GOOGLE_CLIENT_IDS,
+    ...(env.GOOGLE_CLIENT_IDS
+      ? env.GOOGLE_CLIENT_IDS.split(',').map((id) => id.trim()).filter(Boolean)
+      : []),
+  ])
+);
