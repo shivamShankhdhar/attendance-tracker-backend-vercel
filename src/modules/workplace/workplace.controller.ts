@@ -54,6 +54,27 @@ export class WorkplaceController {
       next(error);
     }
   }
+
+  async deleteWorkplace(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const result = await workplaceService.deleteWorkplace(req.user.userId, getParam(req, 'workplaceId'));
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resetMyAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const result = await workplaceService.resetMyAccount(req.user.userId);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const workplaceController = new WorkplaceController();
+

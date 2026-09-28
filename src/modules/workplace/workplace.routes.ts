@@ -18,6 +18,7 @@ workplaceRouter.post(
 
 workplaceRouter.get('/', workplaceController.getMyWorkplaces);
 workplaceRouter.get('/pending-invites', workplaceController.getPendingInvites);
+workplaceRouter.post('/reset-my-account', workplaceController.resetMyAccount);
 
 workplaceRouter.get(
   '/:workplaceId',
@@ -32,3 +33,11 @@ workplaceRouter.patch(
   validateRequest({ body: updateWorkplaceSchema }),
   workplaceController.updateWorkplace
 );
+
+workplaceRouter.delete(
+  '/:workplaceId',
+  requireWorkplaceMember(),
+  requireWorkplaceRole(['EMPLOYER']),
+  workplaceController.deleteWorkplace
+);
+

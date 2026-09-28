@@ -118,6 +118,41 @@ export class WorkplaceService {
         name: inv.name,
       }));
   }
+
+  /**
+   * Delete workplace and all associated memberships (owner only)
+   */
+  async deleteWorkplace(ownerId: string, workplaceId: string) {
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace) {
+      throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+    }
+    if (workplace.ownerId.toString() !== ownerId) {
+      throw new AppError('Only the workplace owner can delete this workplace', 403, 'FORBIDDEN');
+    }
+
+    await WorkplaceMemberModel.deleteMany({ workplaceId });
+    await WorkplaceModel.findByIdAndDelete(workplaceId);
+
+    return { success: true, message: 'Workplace deleted successfully' };
+  }
+
+  /**
+   * Reset all workplaces and memberships for the user to return to a clean onboarding state
+   */
+  async resetMyAccount(userId: string) {
+    // Delete all workplaces owned by this user
+    const owned = await WorkplaceModel.find({ ownerId: userId });
+    for (const wp of owned) {
+      await WorkplaceMemberModel.deleteMany({ workplaceId: wp._id });
+      await WorkplaceModel.findByIdAndDelete(wp._id);
+    }
+
+    // Delete any other memberships for this user
+    await WorkplaceMemberModel.deleteMany({ userId });
+
+    return { success: true, message: 'Account reset for onboarding' };
+  }
 }
 
 export const workplaceService = new WorkplaceService();
