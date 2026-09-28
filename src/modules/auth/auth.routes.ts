@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authController } from './auth.controller';
 import { validateRequest } from '../../middleware/validateRequest';
-import { authenticate } from '../../middleware/authenticate';
+import { authenticate, optionalAuthenticate } from '../../middleware/authenticate';
 import { rateLimiter } from '../../middleware/rateLimiter';
 import {
   googleExchangeSchema,
@@ -205,4 +205,4 @@ authRouter.post(
   authController.updatePushToken
 );
 
-authRouter.post('/logout', authenticate, authController.logout);
+authRouter.post('/logout', optionalAuthenticate, authController.logout);

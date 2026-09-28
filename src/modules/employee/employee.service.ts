@@ -34,13 +34,14 @@ export class EmployeeService {
     workplaceId: string,
     actorId: string,
     data: {
-      name: string;
+      name?: string;
       email?: string;
       employeeCode?: string;
       pin?: string;
     }
   ) {
     const normEmail = data.email ? data.email.trim().toLowerCase() : undefined;
+    const memberName = data.name?.trim() || (normEmail ? normEmail.split('@')[0] : 'Employee');
 
     // Check if email already added to this workplace
     if (normEmail) {
@@ -83,7 +84,7 @@ export class EmployeeService {
       workplaceId: new Types.ObjectId(workplaceId),
       userId: existingUser ? existingUser._id : undefined,
       role: 'EMPLOYEE',
-      name: data.name.trim(),
+      name: memberName,
       employeeCode: code,
       invitedEmail: normEmail,
       pinHash,

@@ -1,10 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { AnyZodObject } from 'zod';
+import { ZodTypeAny } from 'zod';
 
 export function validateRequest(schema: {
-  body?: AnyZodObject;
-  query?: AnyZodObject;
-  params?: AnyZodObject;
+  body?: ZodTypeAny;
+  query?: ZodTypeAny;
+  params?: ZodTypeAny;
 }) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {

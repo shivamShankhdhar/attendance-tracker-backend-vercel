@@ -1,11 +1,15 @@
 import { z } from 'zod';
 
-export const createEmployeeSchema = z.object({
-  name: z.string().min(2, 'Employee name is required').max(60),
-  email: z.string().email('Valid email address required').optional(),
-  employeeCode: z.string().min(2).max(12).optional(),
-  pin: z.string().min(4, 'PIN must be at least 4 digits').max(6, 'PIN maximum 6 digits').optional(),
-});
+export const createEmployeeSchema = z
+  .object({
+    name: z.string().max(60).optional(),
+    email: z.string().email('Valid email address required').optional(),
+    employeeCode: z.string().min(2).max(12).optional(),
+    pin: z.string().min(4, 'PIN must be at least 4 digits').max(6, 'PIN maximum 6 digits').optional(),
+  })
+  .refine((data) => Boolean(data.name || data.email), {
+    message: 'Either employee name or email must be provided',
+  });
 
 export const updateEmployeeSchema = z.object({
   name: z.string().min(2).max(60).optional(),

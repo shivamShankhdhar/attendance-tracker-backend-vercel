@@ -105,11 +105,11 @@ export class AuthService {
       await user.save();
     }
 
-    // Auto-bind any pending workplace memberships for this verified email
+    // Auto-link any pending workplace memberships for this verified email (preserve INVITED status for Screen 4 onboarding)
     if (email) {
       await WorkplaceMemberModel.updateMany(
         { invitedEmail: email, status: 'INVITED' },
-        { $set: { userId: user._id, status: 'ACTIVE' } }
+        { $set: { userId: user._id } }
       );
     }
 
@@ -119,47 +119,53 @@ export class AuthService {
       status: { $in: ['ACTIVE', 'INVITED'] },
     });
 
-    // If first-time user with no workplace, auto-provision default workplace immediately!
-    // No tedious manual setup forms needed on sign up.
-    if (userMemberships.length === 0) {
-      const defaultName = `${user.name || 'My'}'s Workplace`;
-      const workplace = await WorkplaceModel.create({
-        name: defaultName,
-        ownerId: user._id,
-        timezone: 'Asia/Kolkata',
-        status: 'ACTIVE',
-        settings: {
-          allowSelfCheckIn: true,
-          requireWifiVerification: false,
-          requireLocationVerification: false,
-        },
-      });
-
-      await WorkplaceMemberModel.create({
-        workplaceId: workplace._id,
-        userId: user._id,
-        name: user.name || 'Owner',
-        role: 'EMPLOYER',
-        status: 'ACTIVE',
-      });
-    }
+    // Do not auto-provision workplace. First-time users will choose whether to Create or Join a workplace.
 
     return this.buildAuthSession(user);
   }
 
   /**
-   * Authenticate employee with Workplace ID + Employee Code + PIN
+   * Authenticate employee with Employee Code + PIN (and optional Workplace ID)
    */
-  async loginWithPin(workplaceId: string, employeeCode: string, pin: string, expoPushToken?: string) {
-    const workplace = await WorkplaceModel.findById(workplaceId);
-    if (!workplace || workplace.status !== 'ACTIVE') {
-      throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_NOT_FOUND');
-    }
+  async loginWithPin(workplaceId: string | undefined, employeeCode: string, pin: string, expoPushToken?: string) {
+    let member: any = null;
+    let workplace: any = null;
 
-    const member = await WorkplaceMemberModel.findOne({
-      workplaceId: workplace._id,
-      employeeCode: employeeCode.trim().toUpperCase(),
-    });
+    if (workplaceId) {
+      workplace = await WorkplaceModel.findById(workplaceId);
+      if (!workplace || workplace.status !== 'ACTIVE') {
+        throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_NOT_FOUND');
+      }
+
+      member = await WorkplaceMemberModel.findOne({
+        workplaceId: workplace._id,
+        employeeCode: employeeCode.trim().toUpperCase(),
+      });
+    } else {
+      const candidates = await WorkplaceMemberModel.find({
+        employeeCode: employeeCode.trim().toUpperCase(),
+        status: { $in: ['ACTIVE', 'INVITED'] },
+      }).populate('workplaceId');
+
+      for (const cand of candidates) {
+        if (cand.pinHash && (await verifyPin(pin, cand.pinHash))) {
+          const wp = cand.workplaceId as any;
+          if (wp && wp.status === 'ACTIVE') {
+            member = cand;
+            workplace = wp;
+            break;
+          }
+        }
+      }
+
+      if (!member) {
+        if (candidates.length === 0) {
+          throw new AppError('Invalid employee code. Please verify with your employer.', 401, 'INVALID_CREDENTIALS');
+        } else {
+          throw new AppError('Invalid PIN entered. Please try again.', 401, 'INVALID_PIN');
+        }
+      }
+    }
 
     if (!member || member.status === 'INACTIVE') {
       throw new AppError('Invalid employee code or inactive membership', 401, 'INVALID_CREDENTIALS');
@@ -233,7 +239,7 @@ export class AuthService {
     }
 
     const memberships = await WorkplaceMemberModel.find({
-      $or: [{ userId: user._id }, { invitedEmail: user.email }],
+      $or: [{ userId: user._id }, ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : [])],
       status: { $in: ['ACTIVE', 'INVITED'] },
     }).populate('workplaceId', 'name timezone address wifiSsid status');
 

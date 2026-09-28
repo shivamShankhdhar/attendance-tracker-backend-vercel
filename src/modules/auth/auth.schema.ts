@@ -14,7 +14,7 @@ export const googleExchangeSchema = z.object({
 });
 
 export const employeePinLoginSchema = z.object({
-  workplaceId: z.string().min(1, 'Workplace ID is required'),
+  workplaceId: z.string().optional(),
   employeeCode: z.string().min(1, 'Employee code is required'),
   pin: z.string().min(4, 'PIN must be at least 4 digits').max(6, 'PIN maximum 6 digits'),
   expoPushToken: z.string().optional(),

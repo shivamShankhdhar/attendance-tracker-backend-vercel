@@ -17,26 +17,17 @@ export class AttendanceService {
 
     const todayDate = getWorkplaceLocalDate(new Date(), workplace.timezone);
 
-    // 1. Fetch all active employees
-    const employees = await WorkplaceMemberModel.find({
-      workplaceId: new Types.ObjectId(workplaceId),
-      role: 'EMPLOYEE',
-      status: 'ACTIVE',
-    }).sort({ name: 1 });
-
-    // 2. Fetch all attendance records for today
-    const attendances = await AttendanceModel.find({
-      workplaceId: new Types.ObjectId(workplaceId),
-      attendanceDate: todayDate,
-    });
+    // These independent reads share the same workplace/date scope.
+    const [employees, attendances, requests] = await Promise.all([
+      WorkplaceMemberModel.find({
+        workplaceId: workplace._id, role: 'EMPLOYEE', status: { $in: ['ACTIVE', 'INVITED'] },
+      }).select('name employeeCode').sort({ name: 1 }).lean(),
+      AttendanceModel.find({ workplaceId: workplace._id, attendanceDate: todayDate })
+        .select('employeeMemberId status checkInTime approvedAt source').lean(),
+      AttendanceRequestModel.find({ workplaceId: workplace._id, attendanceDate: todayDate, status: 'PENDING' })
+        .select('employeeMemberId requestedAt').lean(),
+    ]);
     const attendanceMap = new Map(attendances.map((a) => [a.employeeMemberId.toString(), a]));
-
-    // 3. Fetch all pending requests for today
-    const requests = await AttendanceRequestModel.find({
-      workplaceId: new Types.ObjectId(workplaceId),
-      attendanceDate: todayDate,
-      status: 'PENDING',
-    });
     const pendingMap = new Map(requests.map((r) => [r.employeeMemberId.toString(), r]));
 
     let presentCount = 0;
@@ -260,6 +251,42 @@ export class AttendanceService {
       message: 'Manual attendance saved successfully',
       attendance,
     };
+  }
+
+  /**
+   * Employer views a specific employee's attendance history
+   */
+  async getEmployeeHistory(
+    workplaceId: string,
+    memberId: string,
+    query: { month?: string; startDate?: string; endDate?: string } = {}
+  ) {
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+
+    const filter: any = {
+      workplaceId: new Types.ObjectId(workplaceId),
+      employeeMemberId: new Types.ObjectId(memberId),
+    };
+
+    if (query.month) {
+      filter.attendanceDate = { $regex: `^${query.month}` };
+    } else if (query.startDate && query.endDate) {
+      filter.attendanceDate = { $gte: query.startDate, $lte: query.endDate };
+    }
+
+    const records = await AttendanceModel.find(filter).sort({ attendanceDate: -1 }).limit(60);
+
+    return records.map((rec) => ({
+      id: rec._id.toString(),
+      attendanceDate: rec.attendanceDate,
+      status: rec.status,
+      checkInTime: rec.checkInTime,
+      approvedAt: rec.approvedAt,
+      source: rec.source,
+      verification: rec.verification,
+      correctionReason: rec.correctionReason,
+    }));
   }
 }
 

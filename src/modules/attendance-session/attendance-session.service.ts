@@ -114,13 +114,18 @@ export class AttendanceSessionService {
       }
     }
 
-    return {
+    const sessionObj = {
       id: session._id.toString(),
       workplaceId: session.workplaceId.toString(),
       attendanceDate: session.attendanceDate,
       status: session.status,
       openedAt: session.openedAt,
       expiresAt: session.expiresAt,
+    };
+
+    return {
+      session: sessionObj,
+      ...sessionObj,
       qrToken: rawQrToken,
       qrPayload: rawQrToken ? `attendance://checkin?token=${rawQrToken}&workplace=${workplace._id}` : null,
     };

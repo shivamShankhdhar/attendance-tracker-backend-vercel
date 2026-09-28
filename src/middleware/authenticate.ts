@@ -33,3 +33,22 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     next(error);
   }
 }
+
+export async function optionalAuthenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const payload = verifyAccessToken(token);
+        const user = await UserModel.findById(payload.userId);
+        if (user && user.status === 'ACTIVE') {
+          req.user = payload;
+        }
+      } catch {}
+    }
+    next();
+  } catch {
+    next();
+  }
+}

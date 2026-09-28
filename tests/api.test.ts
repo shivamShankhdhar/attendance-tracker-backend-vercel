@@ -338,4 +338,37 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(scanClosedRes.status, 400);
     assert.equal(scanClosedRes.body.error.code, 'SESSION_CLOSED_OR_EXPIRED');
   });
+  test('13. PIN-only users receive only their own memberships and logout revokes refresh', async () => {
+    const added = await makeRequest(`/api/v1/workplaces/${workplaceId}/employees`, {
+      method: 'POST', headers: { Authorization: `Bearer ${employerToken}` },
+      body: { name: 'Test PIN-only employee', employeeCode: 'PINONLY', pin: '5831' },
+    });
+    assert.equal(added.status, 201);
+    const login = await makeRequest('/api/v1/auth/employee-pin-login', {
+      method: 'POST', body: { workplaceId, employeeCode: 'PINONLY', pin: '5831' },
+    });
+    assert.equal(login.status, 200);
+    const session = login.body.data;
+    try {
+      assert.equal(session.memberships.length, 1);
+      assert.equal(session.memberships[0].id, added.body.data.employee.id);
+      assert.equal(session.memberships[0].role, 'EMPLOYEE');
+      const forbidden = await makeRequest(`/api/v1/workplaces/${workplaceId}/employees`, {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+      });
+      assert.equal(forbidden.status, 403);
+      const logout = await makeRequest('/api/v1/auth/logout', {
+        method: 'POST', headers: { Authorization: `Bearer ${session.accessToken}` },
+      });
+      assert.equal(logout.status, 200);
+      const refresh = await makeRequest('/api/v1/auth/refresh', {
+        method: 'POST', body: { refreshToken: session.refreshToken },
+      });
+      assert.equal(refresh.status, 401);
+    } finally {
+      await WorkplaceMemberModel.deleteOne({ _id: added.body.data.employee.id });
+      await UserModel.deleteOne({ _id: session.user.id });
+    }
+  });
+
 });

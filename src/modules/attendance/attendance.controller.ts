@@ -49,6 +49,19 @@ export class AttendanceController {
       next(error);
     }
   }
+
+  async getEmployeeHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const history = await attendanceService.getEmployeeHistory(
+        getParam(req, 'workplaceId'),
+        getParam(req, 'memberId'),
+        req.query
+      );
+      res.status(200).json({ success: true, data: history });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const attendanceController = new AttendanceController();

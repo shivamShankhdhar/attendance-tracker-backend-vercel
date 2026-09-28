@@ -219,6 +219,7 @@ export class AttendanceRequestService {
       workplaceName: workplace.name,
       status: request.status,
       requestedAt: request.requestedAt,
+      reviewedAt: request.reviewedAt,
       verification: request.verification,
       rejectionReason: request.rejectionReason,
     };

@@ -41,3 +41,13 @@ attendanceRouter.post(
   validateRequest({ body: manualAttendanceSchema }),
   attendanceController.markManualAttendance
 );
+
+// Employer views a specific employee's attendance history
+attendanceRouter.get(
+  '/:workplaceId/attendance/employees/:memberId/history',
+  requireWorkplaceMember(),
+  requireWorkplaceRole(['EMPLOYER']),
+  validateRequest({ query: attendanceHistoryQuerySchema }),
+  attendanceController.getEmployeeHistory
+);
+
