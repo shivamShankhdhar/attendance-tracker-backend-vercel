@@ -5,6 +5,7 @@ export interface IUser extends Document {
   name: string;
   email?: string;
   phone?: string;
+  avatarUrl?: string;
   googleSub?: string;
   status: 'ACTIVE' | 'INACTIVE';
   tokenVersion: number;
@@ -26,6 +27,10 @@ const userSchema = new Schema<IUser>(
       type: String,
       trim: true,
       index: { unique: true, sparse: true },
+    },
+    avatarUrl: {
+      type: String,
+      trim: true,
     },
     googleSub: {
       type: String,

@@ -22,6 +22,7 @@ export class AuthService {
     let googleSub: string;
     let email: string | undefined;
     let name: string;
+    let avatarUrl: string | undefined;
 
     // Verify Google ID token
     const isDevMock = Boolean(devMockProfile && (env.NODE_ENV !== 'production' || idToken.startsWith('dev-') || idToken === 'dev-token'));
@@ -44,6 +45,7 @@ export class AuthService {
         googleSub = payload.sub;
         email = payload.email?.toLowerCase();
         name = payload.name || payload.given_name || 'User';
+        avatarUrl = payload.picture;
       } catch (err: any) {
         console.error('[AuthService] Primary Google verification failed:', err.message);
 
@@ -58,6 +60,7 @@ export class AuthService {
               googleSub = payload.sub;
               email = payload.email?.toLowerCase();
               name = payload.name || payload.given_name || 'User';
+              avatarUrl = payload.picture;
             } else {
               throw err;
             }
@@ -90,6 +93,7 @@ export class AuthService {
         googleSub,
         email,
         name,
+        avatarUrl,
         status: 'ACTIVE',
         tokenVersion: 1,
         expoPushToken,
@@ -97,6 +101,7 @@ export class AuthService {
     } else {
       if (expoPushToken) user.expoPushToken = expoPushToken;
       if (name && !user.name) user.name = name;
+      if (avatarUrl) user.avatarUrl = avatarUrl;
       await user.save();
     }
 
@@ -238,6 +243,7 @@ export class AuthService {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        avatarUrl: user.avatarUrl,
         status: user.status,
       },
       memberships: memberships.map((m: any) => ({
