@@ -1,11 +1,23 @@
 import { app } from '../src/app';
 import { connectDatabase } from '../src/config/database';
 
-export default async function handler(req: any, res: any) {
-  const url = req.url || '';
-  const isHealthCheck = url === '/health' || url.startsWith('/health') || url.includes('/health');
+const handler = async (req: any, res: any) => {
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
+  );
 
-  if (!isHealthCheck) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  const url = req.url || '';
+  const isHealth = url === '/health' || url.includes('/health');
+
+  if (!isHealth) {
     try {
       await connectDatabase();
     } catch (error: any) {
@@ -22,4 +34,10 @@ export default async function handler(req: any, res: any) {
   }
 
   return app(req, res);
+};
+
+export default handler;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = handler;
+  module.exports.default = handler;
 }
