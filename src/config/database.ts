@@ -17,21 +17,23 @@ if (!global.mongooseCache) {
   global.mongooseCache = cached;
 }
 
-export async function connectDatabase(): Promise<typeof mongoose> {
+export async function connectDatabase(customUri?: string): Promise<typeof mongoose> {
   if (cached.conn) {
     return cached.conn;
   }
+
+  const targetUri = customUri || env.MONGODB_URI;
 
   if (!cached.promise) {
     const opts: mongoose.ConnectOptions = {
       bufferCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
     };
 
-    cached.promise = mongoose.connect(env.MONGODB_URI, opts).then((m) => {
-      console.log(`[Database] Connected to MongoDB Atlas at ${m.connection.host}`);
+    cached.promise = mongoose.connect(targetUri, opts).then((m) => {
+      console.log(`[Database] Connected to MongoDB at ${m.connection.host}`);
       return m;
     });
   }

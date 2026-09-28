@@ -9,9 +9,11 @@ import { WorkplaceMemberModel } from '../src/modules/employee/workplace-member.m
 import { AttendanceSessionModel } from '../src/modules/attendance-session/attendance-session.model';
 import { AttendanceRequestModel } from '../src/modules/attendance-request/attendance-request.model';
 import { AttendanceModel } from '../src/modules/attendance/attendance.model';
+import { MongoMemoryServer } from 'mongodb-memory-server';
 
 let server: http.Server;
 let baseUrl: string;
+let mongod: MongoMemoryServer | null = null;
 
 function makeRequest(path: string, options: {
   method?: string;
@@ -61,7 +63,14 @@ function makeRequest(path: string, options: {
 
 describe('Attendance Management System — End-to-End API Suite', () => {
   before(async () => {
-    await connectDatabase();
+    try {
+      await connectDatabase();
+    } catch {
+      console.log('[Test Suite] Remote MongoDB unavailable. Starting in-memory MongoDB server...');
+      mongod = await MongoMemoryServer.create();
+      await connectDatabase(mongod.getUri());
+    }
+
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
         const address = server.address() as any;
@@ -76,9 +85,14 @@ describe('Attendance Management System — End-to-End API Suite', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
     // Clean up test data created with test prefix
-    await UserModel.deleteMany({ email: { $regex: /@test-suite\.local$/ } });
-    await WorkplaceModel.deleteMany({ name: { $regex: /^Test Workplace/ } });
+    try {
+      await UserModel.deleteMany({ email: { $regex: /@test-suite\.local$/ } });
+      await WorkplaceModel.deleteMany({ name: { $regex: /^Test Workplace/ } });
+    } catch {}
     await disconnectDatabase();
+    if (mongod) {
+      await mongod.stop();
+    }
   });
 
   let employerToken: string;
