@@ -15,9 +15,9 @@ const handler = async (req: any, res: any) => {
   }
 
   const url = req.url || '';
-  const isHealth = url === '/health' || url.includes('/health');
+  const isStaticOrHealth = url === '/health' || url.includes('/health') || url.includes('/callback');
 
-  if (!isHealth) {
+  if (!isStaticOrHealth) {
     try {
       await connectDatabase();
     } catch (error: any) {

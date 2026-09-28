@@ -32,6 +32,11 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
+// Direct alias for OAuth callback
+app.get('/auth/callback', (req: Request, res: Response) => {
+  res.redirect(307, '/api/v1/auth/google/callback');
+});
+
 // Mount modular API v1 routes
 const apiV1 = express.Router();
 
