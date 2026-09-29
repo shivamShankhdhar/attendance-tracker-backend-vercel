@@ -136,7 +136,6 @@ describe('Attendance Management System — End-to-End API Suite', () => {
       headers: { Authorization: `Bearer ${employerToken}` },
       body: {
         name: 'Test Workplace Central',
-        timezone: 'Asia/Kolkata',
         address: '101 MG Road, Bengaluru',
         wifiSsid: 'TEST_OFFICE_WIFI',
       },
@@ -398,9 +397,31 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(joinQrRes.status, 200);
     assert.ok(joinQrRes.body.data.qrToken);
     assert.ok(joinQrRes.body.data.qrPayload.startsWith('attendance://join?'));
+    assert.ok(joinQrRes.body.data.deepLink.startsWith('bizora://join?'));
+    assert.ok(joinQrRes.body.data.joinLink.startsWith('https://bizora.app/join?'));
     const joinQrToken = joinQrRes.body.data.qrToken;
+    const shareableJoinLink = joinQrRes.body.data.joinLink;
+    const workplaceCode = workplaceId.slice(-6).toUpperCase();
 
-    // 3. Candidate scans QR code and previews workplace & employer details
+    // 3a. Candidate opens shared web/deep link and previews workplace & employer details
+    const linkPreviewRes = await makeRequest('/api/v1/workplaces/join-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+      body: { token: shareableJoinLink },
+    });
+    assert.equal(linkPreviewRes.status, 200);
+    assert.equal(linkPreviewRes.body.data.workplaceId, workplaceId);
+
+    // 3b. Candidate enters 6-character workplace code and previews workplace & employer details
+    const codePreviewRes = await makeRequest('/api/v1/workplaces/join-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidateToken}` },
+      body: { token: workplaceCode },
+    });
+    assert.equal(codePreviewRes.status, 200);
+    assert.equal(codePreviewRes.body.data.workplaceId, workplaceId);
+
+    // 3c. Candidate scans QR code and previews workplace & employer details
     const previewRes = await makeRequest('/api/v1/workplaces/join-preview', {
       method: 'POST',
       headers: { Authorization: `Bearer ${candidateToken}` },

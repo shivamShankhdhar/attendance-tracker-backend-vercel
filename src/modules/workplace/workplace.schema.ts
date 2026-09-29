@@ -5,8 +5,9 @@ export const createWorkplaceSchema = z.object({
   name: z.string().min(2, 'Workplace name must be at least 2 characters').max(60),
   timezone: z
     .string()
+    .optional()
     .default('Asia/Kolkata')
-    .refine((tz) => isValidTimezone(tz), {
+    .refine((tz) => !tz || isValidTimezone(tz), {
       message: 'Invalid IANA timezone (e.g. Asia/Kolkata, America/New_York)',
     }),
   address: z.string().max(200).optional(),

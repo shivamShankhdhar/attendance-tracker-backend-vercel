@@ -220,6 +220,13 @@ authRouter.post(
 );
 
 authRouter.post(
+  '/mpin/reset',
+  authenticate,
+  validateRequest({ body: mpinSetupSchema }),
+  authController.setupMpin
+);
+
+authRouter.post(
   '/mpin/verify',
   authenticate,
   authLimiter,

@@ -15,6 +15,7 @@ const envSchema = z.object({
   QR_ENCRYPTION_KEY: z.string().min(32, 'QR_ENCRYPTION_KEY must be at least 32 characters hex'),
   GOOGLE_CLIENT_IDS: z.string().optional().default(''),
   RETRY_SECRET: z.string().optional().default('dev_retry_secret'),
+  APP_NAME: z.string().default('Bizora'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

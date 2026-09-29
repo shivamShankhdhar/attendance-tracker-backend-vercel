@@ -180,12 +180,13 @@ export class WorkplaceService {
   /**
    * Helper to parse and decrypt join token from various scan formats
    */
-  private parseJoinToken(rawInput: string): { workplaceId: string; secret?: string } {
+  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; secret?: string; isCodeLookup?: boolean }> {
     let tokenStr = rawInput.trim();
-    // Handle attendance://join?token=... or https://...?token=...
+    // Handle bizora://join?token=... or attendance://join?token=... or https://...?token=...
     if (tokenStr.includes('token=')) {
       try {
-        const url = new URL(tokenStr.startsWith('attendance://') ? tokenStr.replace('attendance://', 'http://dummy/') : tokenStr);
+        const normalized = tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
+        const url = new URL(normalized);
         const qToken = url.searchParams.get('token');
         if (qToken) tokenStr = qToken;
       } catch {
@@ -201,17 +202,33 @@ export class WorkplaceService {
       }
     }
 
+    // 1. Try decrypting as standard encrypted QR/join token
     try {
       const decrypted = decryptToken(tokenStr);
       const data = JSON.parse(decrypted);
-      if (data.type !== 'WORKPLACE_JOIN' || !data.workplaceId) {
-        throw new AppError('Invalid workplace QR code structure', 400, 'INVALID_QR_TOKEN');
+      if (data.type === 'WORKPLACE_JOIN' && data.workplaceId) {
+        return { workplaceId: data.workplaceId, secret: data.secret };
       }
-      return { workplaceId: data.workplaceId, secret: data.secret };
-    } catch (err: any) {
-      if (err instanceof AppError) throw err;
-      throw new AppError('Invalid or unreadable QR code token. Make sure you scanned the correct employer QR.', 400, 'INVALID_QR_TOKEN');
+    } catch {
+      // Fall through to 6-char code / ID matching
     }
+
+    // 2. Try looking up by 6-char workplace code suffix or ObjectId
+    const cleanCode = tokenStr.replace(/[^a-zA-Z0-9]/g, '');
+    if (cleanCode.length === 6 && /^[a-fA-F0-9]{6}$/.test(cleanCode)) {
+      const activeWorkplaces = await WorkplaceModel.find({ status: 'ACTIVE' });
+      const matched = activeWorkplaces.find((w) => w._id.toString().toLowerCase().endsWith(cleanCode.toLowerCase()));
+      if (matched) {
+        return { workplaceId: matched._id.toString(), isCodeLookup: true };
+      }
+    } else if (Types.ObjectId.isValid(cleanCode)) {
+      const matched = await WorkplaceModel.findOne({ _id: cleanCode, status: 'ACTIVE' });
+      if (matched) {
+        return { workplaceId: matched._id.toString(), isCodeLookup: true };
+      }
+    }
+
+    throw new AppError('Invalid or unreadable invite link or code. Make sure you have the correct workplace invite.', 400, 'INVALID_QR_TOKEN');
   }
 
   /**
@@ -238,6 +255,8 @@ export class WorkplaceService {
 
     const encryptedToken = encryptToken(JSON.stringify(payload));
     const qrPayload = `attendance://join?token=${encryptedToken}&workplace=${workplace._id}`;
+    const deepLink = `bizora://join?token=${encryptedToken}&workplace=${workplace._id}`;
+    const joinLink = `https://bizora.app/join?token=${encryptedToken}&workplace=${workplace._id}`;
 
     return {
       workplaceId: workplace._id.toString(),
@@ -245,6 +264,8 @@ export class WorkplaceService {
       address: workplace.address,
       qrToken: encryptedToken,
       qrPayload,
+      deepLink,
+      joinLink,
     };
   }
 
@@ -267,7 +288,7 @@ export class WorkplaceService {
    * Preview workplace details before requesting to join (Employee side)
    */
   async previewJoin(userId: string, rawToken: string) {
-    const { workplaceId, secret } = this.parseJoinToken(rawToken);
+    const { workplaceId, secret, isCodeLookup } = await this.parseJoinToken(rawToken);
 
     const workplace = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
@@ -275,11 +296,11 @@ export class WorkplaceService {
     }
 
     if (workplace.joinQrEnabled === false) {
-      throw new AppError('QR joining is disabled for this workplace', 400, 'JOIN_QR_DISABLED');
+      throw new AppError('Joining is disabled for this workplace', 400, 'JOIN_QR_DISABLED');
     }
 
-    if (workplace.joinQrSecret && secret !== workplace.joinQrSecret) {
-      throw new AppError('This QR code is expired or was rotated. Ask the employer for the new QR code.', 400, 'EXPIRED_QR');
+    if (!isCodeLookup && workplace.joinQrSecret && secret !== workplace.joinQrSecret) {
+      throw new AppError('This invite link is expired or was rotated. Ask the employer for a new link.', 400, 'EXPIRED_QR');
     }
 
     // Check if user is already an ACTIVE member
@@ -327,15 +348,15 @@ export class WorkplaceService {
    * Submit a Join Request to workplace (Employee side)
    */
   async submitJoinRequest(userId: string, data: { token: string; note?: string }) {
-    const { workplaceId, secret } = this.parseJoinToken(data.token);
+    const { workplaceId, secret, isCodeLookup } = await this.parseJoinToken(data.token);
 
     const workplace = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
       throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_NOT_FOUND');
     }
 
-    if (workplace.joinQrSecret && secret !== workplace.joinQrSecret) {
-      throw new AppError('This QR code is expired or was rotated. Ask the employer for the new QR code.', 400, 'EXPIRED_QR');
+    if (!isCodeLookup && workplace.joinQrSecret && secret !== workplace.joinQrSecret) {
+      throw new AppError('This invite link is expired or was rotated. Ask the employer for a new link.', 400, 'EXPIRED_QR');
     }
 
     const user = await UserModel.findById(userId);
