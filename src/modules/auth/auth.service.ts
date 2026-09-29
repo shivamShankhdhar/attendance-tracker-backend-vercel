@@ -1,7 +1,9 @@
+import { Types } from 'mongoose';
 import { OAuth2Client } from 'google-auth-library';
 import { UserModel, IUser } from './user.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
+import { WorkplaceJoinRequestModel } from '../workplace/workplace-join-request.model';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { verifyPin, hashPin } from '../../utils/crypto';
 import { AppError } from '../../middleware/errorHandler';
@@ -194,15 +196,130 @@ export class AuthService {
         expoPushToken,
       });
       member.userId = user._id;
-      member.status = 'ACTIVE';
-      member.joinedAt = member.joinedAt || new Date();
       await member.save();
     } else if (expoPushToken) {
       user.expoPushToken = expoPushToken;
       await user.save();
     }
 
-    return this.buildAuthSession(user, member.workplaceId.toString(), member.role);
+    const wpId = (member.workplaceId as any)?._id || member.workplaceId;
+    const wpIdStr = wpId.toString();
+    const wpName = workplace?.name || (member.workplaceId as any)?.name || 'Workplace';
+
+    // If membership is not ACTIVE yet, it requires admin approval
+    if (member.status !== 'ACTIVE') {
+      let joinReq = await WorkplaceJoinRequestModel.findOne({
+        workplaceId: wpId,
+        $or: [
+          { userId: user._id, status: 'PENDING' },
+          { employeeCode: member.employeeCode, status: 'PENDING' },
+        ],
+      });
+
+      if (!joinReq) {
+        joinReq = await WorkplaceJoinRequestModel.create({
+          workplaceId: wpId,
+          userId: user._id,
+          employeeCode: member.employeeCode,
+          name: member.name,
+          email: member.invitedEmail || '',
+          note: `Employee ID + PIN login request (${member.employeeCode})`,
+          status: 'PENDING',
+        });
+      }
+
+      return {
+        pendingApproval: true,
+        status: 'PENDING',
+        workplaceId: wpIdStr,
+        workplaceName: wpName,
+        employeeCode: member.employeeCode,
+        employeeName: member.name,
+        requestId: joinReq._id.toString(),
+        requestedAt: joinReq.createdAt,
+        message: 'Your login request has been submitted to your workplace admin for approval.',
+      };
+    }
+
+    member.joinedAt = member.joinedAt || new Date();
+    await member.save();
+
+    return this.buildAuthSession(user, wpIdStr, member.role);
+  }
+
+  /**
+   * Check status of employee PIN login approval (polling / check status)
+   */
+  async checkEmployeePinLoginStatus(employeeCode: string, workplaceId?: string) {
+    const formattedCode = employeeCode.trim().toUpperCase();
+    const filter: any = { employeeCode: formattedCode };
+    if (workplaceId && Types.ObjectId.isValid(workplaceId)) {
+      filter.workplaceId = new Types.ObjectId(workplaceId);
+    }
+
+    const member = await WorkplaceMemberModel.findOne(filter).sort({ updatedAt: -1 });
+
+    if (!member) {
+      throw new AppError('Employee record not found', 404, 'EMPLOYEE_NOT_FOUND');
+    }
+
+    const wpIdStr = member.workplaceId.toString();
+    const wp = await WorkplaceModel.findById(member.workplaceId);
+    const workplaceName = wp ? wp.name : 'Workplace';
+
+    if (member.status === 'ACTIVE') {
+      let user: IUser | null = null;
+      if (member.userId) {
+        user = await UserModel.findById(member.userId);
+      }
+      if (!user) {
+        user = await UserModel.create({
+          name: member.name,
+          status: 'ACTIVE',
+          tokenVersion: 1,
+        });
+        member.userId = user._id;
+        await member.save();
+      }
+      const authSession = await this.buildAuthSession(user, wpIdStr, member.role);
+      return {
+        approved: true,
+        status: 'ACTIVE',
+        ...authSession,
+      };
+    }
+
+    // Check if rejected
+    const rejectedReq = await WorkplaceJoinRequestModel.findOne({
+      workplaceId: member.workplaceId,
+      $or: [
+        ...(member.userId ? [{ userId: member.userId }] : []),
+        { employeeCode: formattedCode },
+      ],
+      status: 'REJECTED',
+    }).sort({ updatedAt: -1 });
+
+    if (rejectedReq) {
+      return {
+        approved: false,
+        rejected: true,
+        status: 'REJECTED',
+        rejectionReason: rejectedReq.rejectionReason || 'Your request was declined by your workplace admin.',
+        workplaceName,
+        employeeCode: formattedCode,
+        employeeName: member.name,
+      };
+    }
+
+    return {
+      approved: false,
+      rejected: false,
+      status: 'PENDING',
+      workplaceName,
+      employeeCode: formattedCode,
+      employeeName: member.name,
+      message: 'Still awaiting approval from your workplace admin.',
+    };
   }
 
   /**

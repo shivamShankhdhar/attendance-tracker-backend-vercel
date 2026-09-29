@@ -166,7 +166,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     employeeCode = addEmpRes.body.data.employee.employeeCode;
   });
 
-  test('4. Employee logs in via PIN fallback using Employee Code + PIN', async () => {
+  test('4. Employee logs in via PIN fallback: requires admin approval, admin approves, and employee accesses workspace', async () => {
     const pinLoginRes = await makeRequest('/api/v1/auth/employee-pin-login', {
       method: 'POST',
       body: {
@@ -177,9 +177,27 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     });
 
     assert.equal(pinLoginRes.status, 200);
-    assert.ok(pinLoginRes.body.data.accessToken);
-    employeeToken = pinLoginRes.body.data.accessToken;
-    employeeUserId = pinLoginRes.body.data.user.id;
+    assert.equal(pinLoginRes.body.data.pendingApproval, true);
+    assert.equal(pinLoginRes.body.data.status, 'PENDING');
+    assert.ok(pinLoginRes.body.data.requestId);
+    const pinRequestId = pinLoginRes.body.data.requestId;
+
+    // Admin approves the employee PIN login request
+    const approveRes = await makeRequest(`/api/v1/workplaces/${workplaceId}/join-requests/${pinRequestId}/approve`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+    });
+    assert.equal(approveRes.status, 200);
+
+    // Employee checks status or logs in again: now approved with active session!
+    const statusRes = await makeRequest(`/api/v1/auth/employee-pin-status?employeeCode=${employeeCode}&workplaceId=${workplaceId}`, {
+      method: 'GET',
+    });
+    assert.equal(statusRes.status, 200);
+    assert.equal(statusRes.body.data.approved, true);
+    assert.ok(statusRes.body.data.accessToken);
+    employeeToken = statusRes.body.data.accessToken;
+    employeeUserId = statusRes.body.data.user.id;
   });
 
   test('5. Employer opens today attendance session and receives secure QR token', async () => {
@@ -348,7 +366,20 @@ describe('Attendance Management System — End-to-End API Suite', () => {
       method: 'POST', body: { workplaceId, employeeCode: 'PINONLY', pin: '5831' },
     });
     assert.equal(login.status, 200);
-    const session = login.body.data;
+    assert.equal(login.body.data.pendingApproval, true);
+    const pinReqId = login.body.data.requestId;
+
+    // Employer approves the login request
+    await makeRequest(`/api/v1/workplaces/${workplaceId}/join-requests/${pinReqId}/approve`, {
+      method: 'POST', headers: { Authorization: `Bearer ${employerToken}` },
+    });
+
+    // Employee now successfully logs in
+    const approvedLogin = await makeRequest('/api/v1/auth/employee-pin-login', {
+      method: 'POST', body: { workplaceId, employeeCode: 'PINONLY', pin: '5831' },
+    });
+    assert.equal(approvedLogin.status, 200);
+    const session = approvedLogin.body.data;
     try {
       assert.equal(session.memberships.length, 1);
       assert.equal(session.memberships[0].id, added.body.data.employee.id);

@@ -482,6 +482,7 @@ export class WorkplaceService {
       userId: r.userId?.toString(),
       name: r.name,
       email: r.email,
+      employeeCode: r.employeeCode,
       avatarUrl: r.avatarUrl,
       note: r.note,
       status: r.status,
@@ -511,7 +512,10 @@ export class WorkplaceService {
     }
 
     // Determine employee code
-    let code = data?.employeeCode ? data.employeeCode.trim().toUpperCase() : null;
+    let code = data?.employeeCode
+      ? data.employeeCode.trim().toUpperCase()
+      : joinReq.employeeCode || null;
+
     if (!code) {
       const count = await WorkplaceMemberModel.countDocuments({
         workplaceId: new Types.ObjectId(workplaceId),
@@ -519,10 +523,14 @@ export class WorkplaceService {
       code = `EMP-${1000 + count + 1}`;
     }
 
-    // Check if membership already exists (e.g. was invited previously or inactive)
+    // Check if membership already exists (e.g. was invited previously, PIN employee, or inactive)
     let member = await WorkplaceMemberModel.findOne({
       workplaceId: new Types.ObjectId(workplaceId),
-      userId: joinReq.userId,
+      $or: [
+        ...(joinReq.userId ? [{ userId: joinReq.userId }] : []),
+        ...(joinReq.employeeCode ? [{ employeeCode: joinReq.employeeCode }] : []),
+        ...(joinReq.email ? [{ invitedEmail: joinReq.email.toLowerCase() }] : []),
+      ],
     });
 
     if (member) {
@@ -531,6 +539,7 @@ export class WorkplaceService {
       member.name = joinReq.name;
       member.joinedAt = new Date();
       if (!member.employeeCode) member.employeeCode = code;
+      if (!member.userId && joinReq.userId) member.userId = joinReq.userId;
       await member.save();
     } else {
       member = await WorkplaceMemberModel.create({

@@ -37,6 +37,7 @@ if (!parsedEnv.success) {
       QR_ENCRYPTION_KEY: process.env.QR_ENCRYPTION_KEY || 'fallback_dummy_key_for_diagnostics_32_bytes_hex_val',
       GOOGLE_CLIENT_IDS: process.env.GOOGLE_CLIENT_IDS || '',
       RETRY_SECRET: process.env.RETRY_SECRET || 'dev_retry_secret',
+      APP_NAME: process.env.APP_NAME || 'Bizora',
     };
   } else {
     process.exit(1);

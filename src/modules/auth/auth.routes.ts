@@ -193,6 +193,12 @@ authRouter.post(
   authController.loginWithPin
 );
 
+authRouter.get(
+  '/employee-pin-status',
+  authLimiter,
+  authController.checkEmployeePinStatus
+);
+
 authRouter.post(
   '/refresh',
   rateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 60 }),

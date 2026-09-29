@@ -7,7 +7,8 @@ export interface IWorkplaceJoinRequest extends Document {
   workplaceId: Types.ObjectId;
   userId: Types.ObjectId;
   name: string;
-  email: string;
+  email?: string;
+  employeeCode?: string;
   avatarUrl?: string;
   note?: string;
   status: JoinRequestStatus;
@@ -23,7 +24,8 @@ const workplaceJoinRequestSchema = new Schema<IWorkplaceJoinRequest>(
     workplaceId: { type: Schema.Types.ObjectId, ref: 'Workplace', required: true, index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, trim: true, lowercase: true },
+    email: { type: String, trim: true, lowercase: true, default: '' },
+    employeeCode: { type: String, trim: true, uppercase: true },
     avatarUrl: { type: String, trim: true },
     note: { type: String, trim: true, maxlength: 200 },
     status: {
@@ -49,6 +51,11 @@ workplaceJoinRequestSchema.index({ userId: 1, status: 1, createdAt: -1 });
 workplaceJoinRequestSchema.index(
   { workplaceId: 1, userId: 1 },
   { unique: true, partialFilterExpression: { status: 'PENDING' } }
+);
+// Ensure one pending request per employeeCode per workplace
+workplaceJoinRequestSchema.index(
+  { workplaceId: 1, employeeCode: 1 },
+  { unique: true, partialFilterExpression: { status: 'PENDING', employeeCode: { $exists: true, $type: 'string' } } }
 );
 
 export const WorkplaceJoinRequestModel = model<IWorkplaceJoinRequest>(

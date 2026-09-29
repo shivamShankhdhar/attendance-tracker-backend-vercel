@@ -23,6 +23,20 @@ export class AuthController {
     }
   }
 
+  async checkEmployeePinStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const employeeCode = (req.query.employeeCode as string) || (req.body.employeeCode as string);
+      const workplaceId = (req.query.workplaceId as string) || (req.body.workplaceId as string);
+      if (!employeeCode) {
+        throw new AppError('Employee code is required', 400, 'BAD_REQUEST');
+      }
+      const data = await authService.checkEmployeePinLoginStatus(employeeCode, workplaceId);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { refreshToken } = req.body;
