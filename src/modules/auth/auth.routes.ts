@@ -8,6 +8,10 @@ import {
   employeePinLoginSchema,
   refreshTokenSchema,
   updatePushTokenSchema,
+  mpinSetupSchema,
+  mpinVerifySchema,
+  mpinChangeSchema,
+  mpinBiometricSchema,
 } from './auth.schema';
 
 export const authRouter = Router();
@@ -206,3 +210,41 @@ authRouter.post(
 );
 
 authRouter.post('/logout', optionalAuthenticate, authController.logout);
+
+// 4-Digit MPIN & Biometrics
+authRouter.post(
+  '/mpin/setup',
+  authenticate,
+  validateRequest({ body: mpinSetupSchema }),
+  authController.setupMpin
+);
+
+authRouter.post(
+  '/mpin/verify',
+  authenticate,
+  authLimiter,
+  validateRequest({ body: mpinVerifySchema }),
+  authController.verifyMpin
+);
+
+authRouter.post(
+  '/mpin/change',
+  authenticate,
+  authLimiter,
+  validateRequest({ body: mpinChangeSchema }),
+  authController.changeMpin
+);
+
+authRouter.post(
+  '/mpin/biometric',
+  authenticate,
+  validateRequest({ body: mpinBiometricSchema }),
+  authController.setBiometric
+);
+
+authRouter.get(
+  '/mpin/status',
+  authenticate,
+  authController.getMpinStatus
+);
+

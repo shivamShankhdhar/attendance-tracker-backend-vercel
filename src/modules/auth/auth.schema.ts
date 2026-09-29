@@ -27,3 +27,22 @@ export const refreshTokenSchema = z.object({
 export const updatePushTokenSchema = z.object({
   expoPushToken: z.string().min(1, 'Expo push token is required'),
 });
+
+export const mpinSetupSchema = z.object({
+  mpin: z.string().regex(/^\d{4}$/, 'MPIN must be exactly 4 numeric digits'),
+  enableBiometric: z.boolean().optional(),
+});
+
+export const mpinVerifySchema = z.object({
+  mpin: z.string().regex(/^\d{4}$/, 'MPIN must be exactly 4 numeric digits'),
+});
+
+export const mpinChangeSchema = z.object({
+  oldMpin: z.string().regex(/^\d{4}$/, 'Old MPIN must be exactly 4 numeric digits'),
+  newMpin: z.string().regex(/^\d{4}$/, 'New MPIN must be exactly 4 numeric digits'),
+});
+
+export const mpinBiometricSchema = z.object({
+  enabled: z.boolean(),
+});
+

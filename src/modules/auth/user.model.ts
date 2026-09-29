@@ -10,6 +10,9 @@ export interface IUser extends Document {
   status: 'ACTIVE' | 'INACTIVE';
   tokenVersion: number;
   expoPushToken?: string;
+  mpinHash?: string;
+  hasMpin?: boolean;
+  biometricEnabled?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,6 +54,17 @@ const userSchema = new Schema<IUser>(
     expoPushToken: {
       type: String,
       trim: true,
+    },
+    mpinHash: {
+      type: String,
+    },
+    hasMpin: {
+      type: Boolean,
+      default: false,
+    },
+    biometricEnabled: {
+      type: Boolean,
+      default: false,
     },
   },
   {

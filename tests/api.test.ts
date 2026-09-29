@@ -486,5 +486,82 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     await UserModel.deleteMany({ _id: candidateUserId });
   });
 
+  test('15. 4-Digit MPIN and Biometric App Lock flow: setup, verify, change, and status', async () => {
+    // 1. Initial status for employer
+    const statusRes1 = await makeRequest('/api/v1/auth/mpin/status', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${employerToken}` },
+    });
+    assert.equal(statusRes1.status, 200);
+    assert.equal(statusRes1.body.data.hasMpin, false);
+
+    // 2. Setup 4-digit MPIN
+    const setupRes = await makeRequest('/api/v1/auth/mpin/setup', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '2580', enableBiometric: true },
+    });
+    assert.equal(setupRes.status, 200);
+    assert.equal(setupRes.body.data.hasMpin, true);
+    assert.equal(setupRes.body.data.biometricEnabled, true);
+
+    // 3. Verify correct MPIN
+    const verifySuccessRes = await makeRequest('/api/v1/auth/mpin/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '2580' },
+    });
+    assert.equal(verifySuccessRes.status, 200);
+    assert.equal(verifySuccessRes.body.data.verified, true);
+
+    // 4. Verify incorrect MPIN
+    const verifyFailRes = await makeRequest('/api/v1/auth/mpin/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '0000' },
+    });
+    assert.equal(verifyFailRes.status, 401);
+
+    // 5. Change MPIN
+    const changeRes = await makeRequest('/api/v1/auth/mpin/change', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { oldMpin: '2580', newMpin: '1379' },
+    });
+    assert.equal(changeRes.status, 200);
+
+    // 6. Verify with old MPIN fails, new MPIN succeeds
+    const oldVerifyRes = await makeRequest('/api/v1/auth/mpin/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '2580' },
+    });
+    assert.equal(oldVerifyRes.status, 401);
+
+    const newVerifyRes = await makeRequest('/api/v1/auth/mpin/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '1379' },
+    });
+    assert.equal(newVerifyRes.status, 200);
+
+    // 7. Toggle Biometric preference
+    const bioRes = await makeRequest('/api/v1/auth/mpin/biometric', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { enabled: false },
+    });
+    assert.equal(bioRes.status, 200);
+    assert.equal(bioRes.body.data.biometricEnabled, false);
+
+    // 8. Profile includes updated MPIN and biometric flags
+    const profileRes = await makeRequest('/api/v1/auth/me', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${employerToken}` },
+    });
+    assert.equal(profileRes.status, 200);
+    assert.equal(profileRes.body.data.user.hasMpin, true);
+    assert.equal(profileRes.body.data.user.biometricEnabled, false);
+  });
 });
 

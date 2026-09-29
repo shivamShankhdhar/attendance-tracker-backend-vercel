@@ -3,7 +3,7 @@ import { UserModel, IUser } from './user.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../utils/jwt';
-import { verifyPin } from '../../utils/crypto';
+import { verifyPin, hashPin } from '../../utils/crypto';
 import { AppError } from '../../middleware/errorHandler';
 import { googleClientIds, env } from '../../config/env';
 
@@ -268,8 +268,125 @@ export class AuthService {
         phone: user.phone,
         avatarUrl: user.avatarUrl,
         status: user.status,
+        hasMpin: Boolean(user.hasMpin || user.mpinHash),
+        biometricEnabled: Boolean(user.biometricEnabled),
       },
       memberships: mappedMemberships,
+    };
+  }
+
+  /**
+   * Set up 4-digit MPIN for user
+   */
+  async setupMpin(userId: string, mpin: string, enableBiometric?: boolean) {
+    if (!/^\d{4}$/.test(mpin)) {
+      throw new AppError('MPIN must be exactly 4 numeric digits', 400, 'INVALID_MPIN_FORMAT');
+    }
+
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    const hashed = await hashPin(mpin);
+    user.mpinHash = hashed;
+    user.hasMpin = true;
+    if (typeof enableBiometric === 'boolean') {
+      user.biometricEnabled = enableBiometric;
+    }
+    await user.save();
+
+    return {
+      hasMpin: true,
+      biometricEnabled: Boolean(user.biometricEnabled),
+    };
+  }
+
+  /**
+   * Verify 4-digit MPIN for user
+   */
+  async verifyMpin(userId: string, mpin: string) {
+    if (!/^\d{4}$/.test(mpin)) {
+      throw new AppError('MPIN must be exactly 4 numeric digits', 400, 'INVALID_MPIN_FORMAT');
+    }
+
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    if (!user.mpinHash) {
+      throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
+    }
+
+    const isValid = await verifyPin(mpin, user.mpinHash);
+    if (!isValid) {
+      throw new AppError('Incorrect MPIN. Please try again.', 401, 'INVALID_MPIN');
+    }
+
+    return { verified: true };
+  }
+
+  /**
+   * Change 4-digit MPIN
+   */
+  async changeMpin(userId: string, oldMpin: string, newMpin: string) {
+    if (!/^\d{4}$/.test(oldMpin) || !/^\d{4}$/.test(newMpin)) {
+      throw new AppError('MPIN must be exactly 4 numeric digits', 400, 'INVALID_MPIN_FORMAT');
+    }
+
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    if (!user.mpinHash) {
+      throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
+    }
+
+    const isMatch = await verifyPin(oldMpin, user.mpinHash);
+    if (!isMatch) {
+      throw new AppError('Current MPIN is incorrect', 401, 'INVALID_CURRENT_MPIN');
+    }
+
+    const newHashed = await hashPin(newMpin);
+    user.mpinHash = newHashed;
+    user.hasMpin = true;
+    await user.save();
+
+    return { success: true, message: 'MPIN changed successfully' };
+  }
+
+  /**
+   * Enable/Disable biometric unlock preference
+   */
+  async setBiometric(userId: string, enabled: boolean) {
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    user.biometricEnabled = enabled;
+    await user.save();
+
+    return {
+      hasMpin: Boolean(user.hasMpin || user.mpinHash),
+      biometricEnabled: Boolean(user.biometricEnabled),
+    };
+  }
+
+  /**
+   * Get MPIN and Biometric status
+   */
+  async getMpinStatus(userId: string) {
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    return {
+      hasMpin: Boolean(user.hasMpin || user.mpinHash),
+      biometricEnabled: Boolean(user.biometricEnabled),
     };
   }
 

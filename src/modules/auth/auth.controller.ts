@@ -65,6 +65,60 @@ export class AuthController {
       next(error);
     }
   }
+
+  async setupMpin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { mpin, enableBiometric } = req.body;
+      const data = await authService.setupMpin(req.user.userId, mpin, enableBiometric);
+      res.status(200).json({ success: true, message: 'MPIN created successfully', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async verifyMpin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { mpin } = req.body;
+      const data = await authService.verifyMpin(req.user.userId, mpin);
+      res.status(200).json({ success: true, message: 'MPIN verified', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async changeMpin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { oldMpin, newMpin } = req.body;
+      const data = await authService.changeMpin(req.user.userId, oldMpin, newMpin);
+      res.status(200).json({ success: true, message: 'MPIN changed successfully', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async setBiometric(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { enabled } = req.body;
+      const data = await authService.setBiometric(req.user.userId, enabled);
+      res.status(200).json({ success: true, message: 'Biometric preference updated', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getMpinStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await authService.getMpinStatus(req.user.userId);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const authController = new AuthController();
