@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { Transporter } from 'nodemailer';
 
 interface SendMpinOtpOptions {
   toEmail: string;
@@ -8,7 +8,7 @@ interface SendMpinOtpOptions {
 }
 
 class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
+  private transporter: Transporter | null = null;
 
   constructor() {
     this.initTransporter();
