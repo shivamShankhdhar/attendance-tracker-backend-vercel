@@ -1,11 +1,14 @@
-import { Types } from 'mongoose';
+import { env } from '../../config/env';
+import { createDeferredInviteLink } from './workplace-links';
+import { NotificationOutboxModel } from '../notification/notification.model';
+import { Types, connection } from 'mongoose';
 import { WorkplaceModel } from './workplace.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceJoinRequestModel } from './workplace-join-request.model';
 import { UserModel } from '../auth/user.model';
 import { AuditLogModel } from '../audit/audit.model';
 import { AppError } from '../../middleware/errorHandler';
-import { encryptToken, decryptToken, generateSecureToken } from '../../utils/crypto';
+import { decryptToken, generateSecureToken } from '../../utils/crypto';
 
 export class WorkplaceService {
   /**
@@ -15,6 +18,7 @@ export class WorkplaceService {
     name: string;
     timezone?: string;
     address?: string;
+    description?: string;
     wifiSsid?: string;
     attendanceSettings?: { requireWifi: boolean; autoCloseHour: number };
   }) {
@@ -28,6 +32,7 @@ export class WorkplaceService {
       ownerId: user._id,
       timezone: data.timezone || 'Asia/Kolkata',
       address: data.address?.trim(),
+      description: data.description?.trim(),
       wifiSsid: data.wifiSsid?.trim(),
       attendanceSettings: data.attendanceSettings || { requireWifi: false, autoCloseHour: 23 },
       status: 'ACTIVE',
@@ -100,7 +105,17 @@ export class WorkplaceService {
     if (!workplace || workplace.status !== 'ACTIVE') {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
-    return workplace;
+    const memberCount = await WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, status: 'ACTIVE' });
+    return {
+      id: workplace._id.toString(),
+      name: workplace.name,
+      code: workplace._id.toString().slice(-6).toUpperCase(),
+      address: workplace.address,
+      timezone: workplace.timezone,
+      memberCount,
+      createdAt: workplace.createdAt,
+      attendanceSettings: workplace.attendanceSettings,
+    };
   }
 
   /**
@@ -202,6 +217,18 @@ export class WorkplaceService {
       }
     }
 
+    try {
+      const url = new URL(tokenStr);
+      const match = url.pathname.match(/\/join\/([^/]+)\/?$/);
+      if (match) tokenStr = decodeURIComponent(match[1]);
+    } catch { /* Raw token or workplace code. */ }
+
+    if (/^[a-f0-9]{64}$/.test(tokenStr)) {
+      const invited = await WorkplaceModel.findOne({ joinInviteToken: tokenStr });
+      if (!invited) throw new AppError('This invitation is invalid or has been replaced.', 404, 'INVALID_QR_TOKEN');
+      return { workplaceId: invited._id.toString(), secret: invited.joinQrSecret };
+    }
+
     // 1. Try decrypting as standard encrypted QR/join token
     try {
       const decrypted = decryptToken(tokenStr);
@@ -240,23 +267,25 @@ export class WorkplaceService {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
 
-    if (!workplace.joinQrSecret) {
-      workplace.joinQrSecret = generateSecureToken(16);
-      await workplace.save();
+    if (!workplace.joinInviteToken) {
+      await WorkplaceModel.updateOne(
+        { _id: workplace._id, joinInviteToken: { $exists: false } },
+        { $set: { joinInviteToken: generateSecureToken(), ...(workplace.joinQrSecret ? {} : { joinQrSecret: generateSecureToken(16) }) } }
+      );
     }
-
-    const payload = {
-      type: 'WORKPLACE_JOIN',
-      workplaceId: workplace._id.toString(),
-      secret: workplace.joinQrSecret,
-      v: 1,
-      ts: Date.now(),
-    };
-
-    const encryptedToken = encryptToken(JSON.stringify(payload));
-    const qrPayload = `attendance://join?token=${encryptedToken}&workplace=${workplace._id}`;
-    const deepLink = `bizora://join?token=${encryptedToken}&workplace=${workplace._id}`;
-    const joinLink = `https://bizora.app/join?token=${encryptedToken}&workplace=${workplace._id}`;
+    const current = await WorkplaceModel.findById(workplace._id).orFail();
+    const encryptedToken = current.joinInviteToken!;
+    const deepLink = `bizora://join/${encodeURIComponent(encryptedToken)}`;
+    const landing = new URL(env.WORKPLACE_JOIN_URL);
+    landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(encryptedToken)}`;
+    landing.search = '';
+    const canonicalLink = landing.toString();
+    let joinLink = current.joinShareUrl || canonicalLink;
+    if (!current.joinShareUrl && process.env.BRANCH_KEY) {
+      joinLink = await createDeferredInviteLink(encryptedToken, workplace.name, canonicalLink);
+      await WorkplaceModel.updateOne({ _id: current._id, joinInviteToken: encryptedToken }, { $set: { joinShareUrl: joinLink } });
+    }
+    const qrPayload = joinLink;
 
     return {
       workplaceId: workplace._id.toString(),
@@ -279,6 +308,8 @@ export class WorkplaceService {
     }
 
     workplace.joinQrSecret = generateSecureToken(16);
+    workplace.joinInviteToken = generateSecureToken();
+    workplace.joinShareUrl = undefined;
     await workplace.save();
 
     return this.getJoinQr(workplaceId);
@@ -287,7 +318,7 @@ export class WorkplaceService {
   /**
    * Preview workplace details before requesting to join (Employee side)
    */
-  async previewJoin(userId: string, rawToken: string) {
+  private async resolveJoinWorkplace(rawToken: string) {
     const { workplaceId, secret, isCodeLookup } = await this.parseJoinToken(rawToken);
 
     const workplace = await WorkplaceModel.findById(workplaceId);
@@ -303,6 +334,18 @@ export class WorkplaceService {
       throw new AppError('This invite link is expired or was rotated. Ask the employer for a new link.', 400, 'EXPIRED_QR');
     }
 
+    return workplace;
+  }
+
+  async publicJoinPreview(rawToken: string) {
+    const workplace = await this.resolveJoinWorkplace(rawToken);
+    return { workplaceId: workplace._id.toString(), workplaceName: workplace.name,
+      workplaceCode: workplace._id.toString().slice(-6).toUpperCase(), address: workplace.address, description: workplace.description, installLink: workplace.joinShareUrl };
+  }
+
+  async previewJoin(userId: string, rawToken: string) {
+    const workplace = await this.resolveJoinWorkplace(rawToken);
+
     // Check if user is already an ACTIVE member
     const existingMember = await WorkplaceMemberModel.findOne({
       workplaceId: workplace._id,
@@ -314,8 +357,8 @@ export class WorkplaceService {
     const pendingRequest = await WorkplaceJoinRequestModel.findOne({
       workplaceId: workplace._id,
       userId: new Types.ObjectId(userId),
-      status: 'PENDING',
-    });
+      status: { $ne: 'CANCELLED' },
+    }).sort({ createdAt: -1 });
 
     const activeMembersCount = await WorkplaceMemberModel.countDocuments({
       workplaceId: workplace._id,
@@ -328,12 +371,14 @@ export class WorkplaceService {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
       address: workplace.address,
+      description: workplace.description,
       timezone: workplace.timezone,
       ownerName: owner?.name || 'Workspace Admin',
       ownerAvatarUrl: owner?.avatarUrl,
       activeMembersCount,
       alreadyMember: Boolean(existingMember),
-      pendingRequest: pendingRequest
+      latestRequest: pendingRequest ? { id: pendingRequest._id.toString(), status: pendingRequest.status, requestedAt: pendingRequest.createdAt, reviewedAt: pendingRequest.reviewedAt, rejectionReason: pendingRequest.rejectionReason } : null,
+      pendingRequest: pendingRequest?.status === 'PENDING'
         ? {
             id: pendingRequest._id.toString(),
             status: pendingRequest.status,
@@ -348,16 +393,7 @@ export class WorkplaceService {
    * Submit a Join Request to workplace (Employee side)
    */
   async submitJoinRequest(userId: string, data: { token: string; note?: string }) {
-    const { workplaceId, secret, isCodeLookup } = await this.parseJoinToken(data.token);
-
-    const workplace = await WorkplaceModel.findById(workplaceId);
-    if (!workplace || workplace.status !== 'ACTIVE') {
-      throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_NOT_FOUND');
-    }
-
-    if (!isCodeLookup && workplace.joinQrSecret && secret !== workplace.joinQrSecret) {
-      throw new AppError('This invite link is expired or was rotated. Ask the employer for a new link.', 400, 'EXPIRED_QR');
-    }
+    const workplace = await this.resolveJoinWorkplace(data.token);
 
     const user = await UserModel.findById(userId);
     if (!user || user.status !== 'ACTIVE') {
@@ -391,8 +427,8 @@ export class WorkplaceService {
       };
     }
 
-    // Create new join request
-    const joinReq = await WorkplaceJoinRequestModel.create({
+    // The unique pending index prevents duplicate requests on rapid taps/retries.
+    const joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' }, { $setOnInsert: {
       workplaceId: workplace._id,
       userId: user._id,
       name: user.name,
@@ -400,7 +436,7 @@ export class WorkplaceService {
       avatarUrl: user.avatarUrl,
       note: data.note?.trim(),
       status: 'PENDING',
-    });
+    } }, { upsert: true, new: true, runValidators: true });
 
     await AuditLogModel.create({
       workplaceId: workplace._id,
@@ -409,6 +445,8 @@ export class WorkplaceService {
       entityId: joinReq._id.toString(),
       metadata: { name: user.name, email: user.email },
     });
+
+    await NotificationOutboxModel.updateOne({ eventId: `join:${joinReq._id}:pending` }, { $setOnInsert: { recipientId: workplace.ownerId, workplaceId: workplace._id, kind: 'JOIN_REQUESTED', title: 'New join request', body: `${user.name} requested to join ${workplace.name}.`, data: { type: 'JOIN_REQUESTED', workplaceId: workplace._id.toString(), requestId: joinReq._id.toString() } } }, { upsert: true });
 
     return {
       message: 'Join request submitted successfully. Awaiting employer approval.',
@@ -445,22 +483,35 @@ export class WorkplaceService {
       }));
   }
 
+  async getMyJoinRequest(userId: string, requestId: string) {
+    if (!Types.ObjectId.isValid(requestId)) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
+    const request = await WorkplaceJoinRequestModel.findOne({ _id: requestId, userId });
+    if (!request) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
+    const workplace = await WorkplaceModel.findById(request.workplaceId);
+    if (!workplace) throw new AppError('Workplace no longer available', 404, 'WORKPLACE_NOT_FOUND');
+    const [owner, activeMembersCount, member] = await Promise.all([
+      UserModel.findById(workplace.ownerId),
+      WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, status: 'ACTIVE' }),
+      WorkplaceMemberModel.findOne({ workplaceId: workplace._id, userId, status: 'ACTIVE' }),
+    ]);
+    return {
+      workplaceId: workplace._id.toString(), workplaceName: workplace.name, description: workplace.description,
+      address: workplace.address, timezone: workplace.timezone, ownerName: owner?.name || 'Workspace Admin',
+      activeMembersCount, alreadyMember: Boolean(member) && workplace.status === 'ACTIVE',
+      latestRequest: { id: request._id.toString(), status: request.status, requestedAt: request.createdAt,
+        reviewedAt: request.reviewedAt, rejectionReason: request.rejectionReason },
+      pendingRequest: null,
+    };
+  }
+
   /**
    * Cancel pending join request (Employee side)
    */
   async cancelMyJoinRequest(userId: string, requestId: string) {
-    const request = await WorkplaceJoinRequestModel.findOne({
-      _id: new Types.ObjectId(requestId),
-      userId: new Types.ObjectId(userId),
-      status: 'PENDING',
-    });
-
-    if (!request) {
-      throw new AppError('Pending join request not found', 404, 'REQUEST_NOT_FOUND');
-    }
-
-    request.status = 'CANCELLED';
-    await request.save();
+    const request = await WorkplaceJoinRequestModel.findOneAndUpdate({
+      _id: requestId, userId, status: 'PENDING',
+    }, { $set: { status: 'CANCELLED' } }, { new: true });
+    if (!request) throw new AppError('Pending join request not found', 409, 'REQUEST_ALREADY_REVIEWED');
 
     return { success: true, message: 'Join request cancelled' };
   }
@@ -501,78 +552,39 @@ export class WorkplaceService {
     requestId: string,
     data?: { employeeCode?: string }
   ) {
-    const joinReq = await WorkplaceJoinRequestModel.findOne({
-      _id: new Types.ObjectId(requestId),
-      workplaceId: new Types.ObjectId(workplaceId),
-      status: 'PENDING',
+    return connection.transaction(async (session) => {
+      const joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate(
+        { _id: requestId, workplaceId, status: 'PENDING' },
+        { $set: { status: 'APPROVED', reviewedBy: actorId, reviewedAt: new Date() } },
+        { new: true, session }
+      );
+      if (!joinReq) throw new AppError('This request has already been reviewed or cancelled.', 409, 'REQUEST_ALREADY_REVIEWED');
+      const workplace = await WorkplaceModel.findOne({ _id: workplaceId, status: 'ACTIVE' }).session(session);
+      if (!workplace) throw new AppError('Workplace is unavailable', 404, 'WORKPLACE_NOT_FOUND');
+      let member = await WorkplaceMemberModel.findOne({ workplaceId, $or: [
+        { userId: joinReq.userId },
+        ...(joinReq.email ? [{ invitedEmail: joinReq.email.toLowerCase(), userId: { $exists: false } }] : []),
+      ] }).session(session);
+      const code = data?.employeeCode?.trim().toUpperCase() || member?.employeeCode || joinReq.employeeCode || `EMP-${generateSecureToken(5).toUpperCase()}`;
+      if (member) {
+        member.status = 'ACTIVE';
+        member.userId = joinReq.userId;
+        member.name = joinReq.name;
+        member.employeeCode = code;
+        member.joinedAt = new Date();
+        await member.save({ session });
+      } else {
+        [member] = await WorkplaceMemberModel.create([{ workplaceId, userId: joinReq.userId, role: 'EMPLOYEE',
+          name: joinReq.name, ...(joinReq.email ? { invitedEmail: joinReq.email } : {}), employeeCode: code,
+          status: 'ACTIVE', joinedAt: new Date() }], { session });
+      }
+      await NotificationOutboxModel.create([{ eventId: `join:${joinReq._id}:approved`, recipientId: joinReq.userId,
+        workplaceId, kind: 'JOIN_APPROVED', title: 'Join request approved', body: `Your request to join ${workplace.name} was approved!`,
+        data: { type: 'JOIN_APPROVED', requestId: joinReq._id.toString(), workplaceId } }], { session });
+      await AuditLogModel.create([{ workplaceId, actorId, action: 'JOIN_REQUEST_APPROVED', entityId: joinReq._id.toString(),
+        metadata: { userId: joinReq.userId.toString(), employeeCode: code } }], { session });
+      return { message: 'Join request approved successfully', memberId: member._id.toString(), employeeCode: member.employeeCode, name: member.name };
     });
-
-    if (!joinReq) {
-      throw new AppError('Pending join request not found', 404, 'REQUEST_NOT_FOUND');
-    }
-
-    // Determine employee code
-    let code = data?.employeeCode
-      ? data.employeeCode.trim().toUpperCase()
-      : joinReq.employeeCode || null;
-
-    if (!code) {
-      const count = await WorkplaceMemberModel.countDocuments({
-        workplaceId: new Types.ObjectId(workplaceId),
-      });
-      code = `EMP-${1000 + count + 1}`;
-    }
-
-    // Check if membership already exists (e.g. was invited previously, PIN employee, or inactive)
-    let member = await WorkplaceMemberModel.findOne({
-      workplaceId: new Types.ObjectId(workplaceId),
-      $or: [
-        ...(joinReq.userId ? [{ userId: joinReq.userId }] : []),
-        ...(joinReq.employeeCode ? [{ employeeCode: joinReq.employeeCode }] : []),
-        ...(joinReq.email ? [{ invitedEmail: joinReq.email.toLowerCase() }] : []),
-      ],
-    });
-
-    if (member) {
-      member.status = 'ACTIVE';
-      member.role = 'EMPLOYEE';
-      member.name = joinReq.name;
-      member.joinedAt = new Date();
-      if (!member.employeeCode) member.employeeCode = code;
-      if (!member.userId && joinReq.userId) member.userId = joinReq.userId;
-      await member.save();
-    } else {
-      member = await WorkplaceMemberModel.create({
-        workplaceId: new Types.ObjectId(workplaceId),
-        userId: joinReq.userId,
-        role: 'EMPLOYEE',
-        name: joinReq.name,
-        invitedEmail: joinReq.email,
-        employeeCode: code,
-        status: 'ACTIVE',
-        joinedAt: new Date(),
-      });
-    }
-
-    joinReq.status = 'APPROVED';
-    joinReq.reviewedBy = new Types.ObjectId(actorId);
-    joinReq.reviewedAt = new Date();
-    await joinReq.save();
-
-    await AuditLogModel.create({
-      workplaceId: new Types.ObjectId(workplaceId),
-      actorId: new Types.ObjectId(actorId),
-      action: 'JOIN_REQUEST_APPROVED',
-      entityId: joinReq._id.toString(),
-      metadata: { userId: joinReq.userId.toString(), employeeCode: code },
-    });
-
-    return {
-      message: 'Join request approved successfully',
-      memberId: member._id.toString(),
-      employeeCode: member.employeeCode,
-      name: member.name,
-    };
   }
 
   /**
@@ -584,34 +596,21 @@ export class WorkplaceService {
     requestId: string,
     data?: { reason?: string }
   ) {
-    const joinReq = await WorkplaceJoinRequestModel.findOne({
-      _id: new Types.ObjectId(requestId),
-      workplaceId: new Types.ObjectId(workplaceId),
-      status: 'PENDING',
+    return connection.transaction(async (session) => {
+      const joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate(
+        { _id: requestId, workplaceId, status: 'PENDING' },
+        { $set: { status: 'REJECTED', reviewedBy: actorId, reviewedAt: new Date(), rejectionReason: data?.reason?.trim() } },
+        { new: true, session }
+      );
+      if (!joinReq) throw new AppError('This request has already been reviewed or cancelled.', 409, 'REQUEST_ALREADY_REVIEWED');
+      const workplace = await WorkplaceModel.findById(workplaceId).session(session);
+      await NotificationOutboxModel.create([{ eventId: `join:${joinReq._id}:rejected`, recipientId: joinReq.userId,
+        workplaceId, kind: 'JOIN_REJECTED', title: 'Join request not approved', body: `Your request to join ${workplace?.name || 'the workplace'} was not approved.`,
+        data: { type: 'JOIN_REJECTED', requestId: joinReq._id.toString(), workplaceId } }], { session });
+      await AuditLogModel.create([{ workplaceId, actorId, action: 'JOIN_REQUEST_REJECTED', entityId: joinReq._id.toString(),
+        metadata: { userId: joinReq.userId.toString(), reason: data?.reason } }], { session });
+      return { message: 'Join request rejected', requestId: joinReq._id.toString() };
     });
-
-    if (!joinReq) {
-      throw new AppError('Pending join request not found', 404, 'REQUEST_NOT_FOUND');
-    }
-
-    joinReq.status = 'REJECTED';
-    joinReq.reviewedBy = new Types.ObjectId(actorId);
-    joinReq.reviewedAt = new Date();
-    joinReq.rejectionReason = data?.reason?.trim();
-    await joinReq.save();
-
-    await AuditLogModel.create({
-      workplaceId: new Types.ObjectId(workplaceId),
-      actorId: new Types.ObjectId(actorId),
-      action: 'JOIN_REQUEST_REJECTED',
-      entityId: joinReq._id.toString(),
-      metadata: { userId: joinReq.userId.toString(), reason: data?.reason },
-    });
-
-    return {
-      message: 'Join request rejected',
-      requestId: joinReq._id.toString(),
-    };
   }
 }
 

@@ -4,7 +4,10 @@ export type NotificationKind =
   | 'ATTENDANCE_REQUESTED'
   | 'ATTENDANCE_APPROVED'
   | 'ATTENDANCE_REJECTED'
-  | 'INVITATION_RECEIVED';
+  | 'INVITATION_RECEIVED'
+  | 'JOIN_REQUESTED'
+  | 'JOIN_APPROVED'
+  | 'JOIN_REJECTED';
 
 export interface INotificationOutbox extends Document {
   _id: Types.ObjectId;
@@ -30,7 +33,7 @@ const notificationOutboxSchema = new Schema<INotificationOutbox>(
     workplaceId: { type: Schema.Types.ObjectId, ref: 'Workplace', required: true },
     kind: {
       type: String,
-      enum: ['ATTENDANCE_REQUESTED', 'ATTENDANCE_APPROVED', 'ATTENDANCE_REJECTED', 'INVITATION_RECEIVED'],
+      enum: ['ATTENDANCE_REQUESTED', 'ATTENDANCE_APPROVED', 'ATTENDANCE_REJECTED', 'INVITATION_RECEIVED', 'JOIN_REQUESTED', 'JOIN_APPROVED', 'JOIN_REJECTED'],
       required: true,
     },
     title: { type: String, required: true },

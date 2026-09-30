@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { notificationService } from '../notification/notification.service';
 import { workplaceService } from './workplace.service';
 import { AppError } from '../../middleware/errorHandler';
 import { getParam } from '../../utils/params';
@@ -113,6 +114,7 @@ export class WorkplaceController {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
       const result = await workplaceService.submitJoinRequest(req.user.userId, req.body);
+      await notificationService.processPendingOutbox(1, result.requestId).catch(() => {});
       res.status(201).json({ success: true, data: result });
     } catch (error) {
       next(error);
@@ -157,6 +159,7 @@ export class WorkplaceController {
       const workplaceId = getParam(req, 'workplaceId');
       const requestId = getParam(req, 'requestId');
       const result = await workplaceService.approveJoinRequest(workplaceId, req.user.userId, requestId, req.body);
+      await notificationService.processPendingOutbox(2, requestId).catch(() => {});
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);
@@ -169,6 +172,7 @@ export class WorkplaceController {
       const workplaceId = getParam(req, 'workplaceId');
       const requestId = getParam(req, 'requestId');
       const result = await workplaceService.rejectJoinRequest(workplaceId, req.user.userId, requestId, req.body);
+      await notificationService.processPendingOutbox(2, requestId).catch(() => {});
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       next(error);

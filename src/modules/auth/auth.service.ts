@@ -343,7 +343,9 @@ export class AuthService {
       phone: user.phone,
     });
 
-    return { accessToken };
+    // Renew the inactivity window so regularly used sessions remain signed in.
+    const refreshToken = generateRefreshToken(user._id.toString(), user.tokenVersion);
+    return { accessToken, refreshToken };
   }
 
   /**
@@ -406,16 +408,21 @@ export class AuthService {
     }
 
     const hashed = await hashPin(mpin);
-    user.mpinHash = hashed;
-    user.hasMpin = true;
-    if (typeof enableBiometric === 'boolean') {
-      user.biometricEnabled = enableBiometric;
-    }
-    await user.save();
+    const updated = await UserModel.findOneAndUpdate({
+      _id: user._id,
+      $or: [{ mpinLockedUntil: null }, { mpinLockedUntil: { $lte: new Date() } }],
+    }, {
+      $set: { mpinHash: hashed, hasMpin: true, mpinFailedAttempts: 0, mpinLockedUntil: null,
+        ...(typeof enableBiometric === 'boolean' ? { biometricEnabled: enableBiometric } : {}) },
+      $inc: { mpinAttemptVersion: 1 },
+    }, { new: true });
+    if (!updated) throw new AppError('MPIN is temporarily locked. Try again after 30 minutes.', 429, 'MPIN_LOCKED', {
+      attemptsRemaining: 0, lockedUntil: (await UserModel.findById(userId))?.mpinLockedUntil?.toISOString(),
+    });
 
     return {
       hasMpin: true,
-      biometricEnabled: Boolean(user.biometricEnabled),
+      biometricEnabled: Boolean(updated.biometricEnabled),
     };
   }
 
@@ -427,21 +434,41 @@ export class AuthService {
       throw new AppError('MPIN must be exactly 4 numeric digits', 400, 'INVALID_MPIN_FORMAT');
     }
 
-    const user = await UserModel.findById(userId);
-    if (!user || user.status !== 'ACTIVE') {
-      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    // Compare-and-swap serializes attempts across concurrent requests/devices.
+    let checkedHash: string | undefined;
+    let valid = false;
+    for (;;) {
+      const user = await UserModel.findById(userId);
+      if (!user || user.status !== 'ACTIVE') throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+      if (!user.mpinHash) throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
+      const now = Date.now();
+      if (user.mpinLockedUntil && user.mpinLockedUntil.getTime() > now) {
+        throw new AppError('Too many incorrect MPIN attempts. Try again after 30 minutes.', 429, 'MPIN_LOCKED', {
+          attemptsRemaining: 0, lockedUntil: user.mpinLockedUntil.toISOString(),
+          retryAfterSeconds: Math.ceil((user.mpinLockedUntil.getTime() - now) / 1000),
+        });
+      }
+      if (checkedHash !== user.mpinHash) {
+        checkedHash = user.mpinHash;
+        valid = await verifyPin(mpin, checkedHash);
+      }
+      const previousAttempts = user.mpinLockedUntil ? 0 : (user.mpinFailedAttempts || 0);
+      const attempts = valid ? 0 : previousAttempts + 1;
+      const lockedUntil = attempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
+      const updated = await UserModel.findOneAndUpdate({
+        _id: user._id, mpinHash: checkedHash,
+        $expr: { $eq: [{ $ifNull: ['$mpinAttemptVersion', 0] }, user.mpinAttemptVersion || 0] },
+      }, {
+        $set: { mpinFailedAttempts: attempts, mpinLockedUntil: lockedUntil },
+        $inc: { mpinAttemptVersion: 1 },
+      });
+      if (!updated) continue;
+      if (lockedUntil) throw new AppError('Too many incorrect MPIN attempts. Try again after 30 minutes.', 429, 'MPIN_LOCKED', {
+        attemptsRemaining: 0, lockedUntil: lockedUntil.toISOString(), retryAfterSeconds: 1800,
+      });
+      if (!valid) throw new AppError(`Incorrect MPIN. ${5 - attempts} attempts remaining.`, 400, 'INVALID_MPIN', { attemptsRemaining: 5 - attempts, lockedUntil: null });
+      return { verified: true, attemptsRemaining: 5, lockedUntil: null };
     }
-
-    if (!user.mpinHash) {
-      throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
-    }
-
-    const isValid = await verifyPin(mpin, user.mpinHash);
-    if (!isValid) {
-      throw new AppError('Incorrect MPIN. Please try again.', 401, 'INVALID_MPIN');
-    }
-
-    return { verified: true };
   }
 
   /**
@@ -461,10 +488,7 @@ export class AuthService {
       throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
     }
 
-    const isMatch = await verifyPin(oldMpin, user.mpinHash);
-    if (!isMatch) {
-      throw new AppError('Current MPIN is incorrect', 401, 'INVALID_CURRENT_MPIN');
-    }
+    await this.verifyMpin(userId, oldMpin);
 
     const newHashed = await hashPin(newMpin);
     user.mpinHash = newHashed;
@@ -501,7 +525,10 @@ export class AuthService {
       throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
     }
 
+    const locked = Boolean(user.mpinLockedUntil && user.mpinLockedUntil.getTime() > Date.now());
     return {
+      attemptsRemaining: locked ? 0 : user.mpinLockedUntil ? 5 : Math.max(0, 5 - (user.mpinFailedAttempts || 0)),
+      lockedUntil: locked ? user.mpinLockedUntil?.toISOString() : null,
       hasMpin: Boolean(user.hasMpin || user.mpinHash),
       biometricEnabled: Boolean(user.biometricEnabled),
     };

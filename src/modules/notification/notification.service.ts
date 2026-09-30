@@ -1,90 +1,50 @@
-import { NotificationOutboxModel, INotificationOutbox } from './notification.model';
+import { NotificationOutboxModel } from './notification.model';
 import { UserModel } from '../auth/user.model';
 
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-
 export class NotificationService {
-  /**
-   * Process pending push notifications in outbox and deliver via Expo Push API
-   */
-  async processPendingOutbox(limit: number = 25): Promise<{ processed: number; sent: number; failed: number }> {
-    const now = new Date();
-
-    const pendingJobs = await NotificationOutboxModel.find({
-      status: 'PENDING',
-      nextAttemptAt: { $lte: now },
-      attempts: { $lt: 5 },
-    }).limit(limit);
-
-    if (pendingJobs.length === 0) {
-      return { processed: 0, sent: 0, failed: 0 };
-    }
-
-    let sent = 0;
-    let failed = 0;
-
-    for (const job of pendingJobs) {
+  /** Claim jobs with a lease so concurrent workers do not send the same event. */
+  async processPendingOutbox(limit = 25, requestId?: string): Promise<{ processed: number; sent: number; failed: number }> {
+    let processed = 0, sent = 0, failed = 0;
+    for (let i = 0; i < limit; i++) {
+      const job = await NotificationOutboxModel.findOneAndUpdate({
+        status: 'PENDING', nextAttemptAt: { $lte: new Date() }, attempts: { $lt: 5 },
+        ...(requestId ? { eventId: { $in: ['pending', 'approved', 'rejected'].map((status) => `join:${requestId}:${status}`) } } : {}),
+      }, { $set: { nextAttemptAt: new Date(Date.now() + 60_000) } }, { new: true, sort: { createdAt: 1 } });
+      if (!job) break;
+      processed++;
       try {
         const recipient = await UserModel.findById(job.recipientId);
-
-        if (!recipient || !recipient.expoPushToken) {
-          // No push token registered on recipient device yet; mark completed without error
-          job.status = 'SENT';
-          job.lastError = 'No expoPushToken registered for user';
+        if (!recipient?.expoPushToken) {
+          // Keep the event for a later registration, instead of falsely marking it sent.
+          job.nextAttemptAt = new Date(Date.now() + 30 * 60_000);
+          job.lastError = 'Waiting for device notification registration';
           await job.save();
-          sent++;
           continue;
         }
-
-        const pushPayload = {
-          to: recipient.expoPushToken,
-          sound: 'default',
-          title: job.title,
-          body: job.body,
-          data: job.data || {},
-        };
-
-        const response = await fetch(EXPO_PUSH_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify(pushPayload),
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST', signal: AbortSignal.timeout(5000),
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+            ...(process.env.EXPO_ACCESS_TOKEN ? { Authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}) },
+          body: JSON.stringify({ to: recipient.expoPushToken, sound: 'default', title: job.title, body: job.body, data: job.data || {} }),
         });
-
-        if (response.ok) {
-          job.status = 'SENT';
-          job.attempts += 1;
-          await job.save();
-          sent++;
-        } else {
-          const errText = await response.text();
-          job.attempts += 1;
-          job.lastError = errText;
-          // Exponential backoff: 1min, 5min, 15min, 1hr
-          const delayMinutes = Math.pow(job.attempts, 2) * 2;
-          job.nextAttemptAt = new Date(Date.now() + delayMinutes * 60 * 1000);
-          if (job.attempts >= 5) {
-            job.status = 'FAILED';
+        const result = await response.json() as { data?: { status?: string; message?: string; details?: { error?: string } } };
+        if (!response.ok || result.data?.status !== 'ok') {
+          if (result.data?.details?.error === 'DeviceNotRegistered') {
+            await UserModel.updateOne({ _id: recipient._id, expoPushToken: recipient.expoPushToken }, { $unset: { expoPushToken: 1 } });
           }
-          await job.save();
-          failed++;
+          throw new Error(result.data?.message || `Push delivery failed (${response.status})`);
         }
-      } catch (err: any) {
-        job.attempts += 1;
-        job.lastError = err.message;
-        job.nextAttemptAt = new Date(Date.now() + 5 * 60 * 1000);
-        if (job.attempts >= 5) {
-          job.status = 'FAILED';
-        }
-        await job.save();
-        failed++;
+        job.status = 'SENT'; job.attempts++; job.lastError = undefined;
+        await job.save(); sent++;
+      } catch (error) {
+        job.attempts++;
+        job.lastError = error instanceof Error ? error.message : 'Push delivery failed';
+        job.nextAttemptAt = new Date(Date.now() + job.attempts ** 2 * 120_000);
+        if (job.attempts >= 5) job.status = 'FAILED';
+        await job.save(); failed++;
       }
     }
-
-    return { processed: pendingJobs.length, sent, failed };
+    return { processed, sent, failed };
   }
 }
-
 export const notificationService = new NotificationService();

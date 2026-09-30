@@ -11,6 +11,9 @@ export interface IUser extends Document {
   tokenVersion: number;
   expoPushToken?: string;
   mpinHash?: string;
+  mpinFailedAttempts?: number;
+  mpinLockedUntil?: Date | null;
+  mpinAttemptVersion?: number;
   hasMpin?: boolean;
   biometricEnabled?: boolean;
   createdAt: Date;
@@ -58,6 +61,9 @@ const userSchema = new Schema<IUser>(
     mpinHash: {
       type: String,
     },
+    mpinFailedAttempts: { type: Number, default: 0 },
+    mpinLockedUntil: { type: Date, default: null },
+    mpinAttemptVersion: { type: Number, default: 0 },
     hasMpin: {
       type: Boolean,
       default: false,

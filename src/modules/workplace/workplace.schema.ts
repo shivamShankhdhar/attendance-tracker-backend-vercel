@@ -11,6 +11,7 @@ export const createWorkplaceSchema = z.object({
       message: 'Invalid IANA timezone (e.g. Asia/Kolkata, America/New_York)',
     }),
   address: z.string().max(200).optional(),
+  description: z.string().max(300).optional(),
   wifiSsid: z.string().max(60).optional(),
   attendanceSettings: z
     .object({
@@ -23,11 +24,11 @@ export const createWorkplaceSchema = z.object({
 export const updateWorkplaceSchema = createWorkplaceSchema.partial();
 
 export const joinPreviewSchema = z.object({
-  token: z.string().min(1, 'Join QR token is required'),
+  token: z.string().min(1, 'Invite token is required').max(4096),
 });
 
 export const submitJoinRequestSchema = z.object({
-  token: z.string().min(1, 'Join QR token is required'),
+  token: z.string().min(1, 'Invite token is required').max(4096),
   note: z.string().max(200, 'Note must not exceed 200 characters').optional(),
 });
 

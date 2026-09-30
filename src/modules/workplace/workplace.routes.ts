@@ -1,3 +1,4 @@
+import { WorkplaceService } from './workplace.service';
 import { Router } from 'express';
 import { workplaceController } from './workplace.controller';
 import { validateRequest } from '../../middleware/validateRequest';
@@ -14,7 +15,24 @@ import {
 
 export const workplaceRouter = Router();
 
-// All workplace routes require authentication
+// Public invitation metadata contains no member or owner identity.
+workplaceRouter.post('/join-landing', validateRequest({ body: joinPreviewSchema }), async (req, res, next) => {
+  try {
+    const data = await new WorkplaceService().publicJoinPreview(req.body.token);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+workplaceRouter.get('/join/:token', async (req, res, next) => {
+  try {
+    const data = await new WorkplaceService().publicJoinPreview(String(req.params.token));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+// Remaining workplace routes require authentication
 workplaceRouter.use(authenticate);
 
 workplaceRouter.post(
@@ -41,6 +59,12 @@ workplaceRouter.post(
 );
 
 workplaceRouter.get('/my-join-requests', workplaceController.getMyJoinRequests);
+workplaceRouter.get('/my-join-requests/:requestId', async (req, res, next) => {
+  try {
+    const data = await new WorkplaceService().getMyJoinRequest(req.user!.userId, String(req.params.requestId));
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
 workplaceRouter.post('/my-join-requests/:requestId/cancel', workplaceController.cancelMyJoinRequest);
 
 // --- Employer Workplace Management Endpoints ---
@@ -104,3 +128,6 @@ workplaceRouter.post(
   workplaceController.rejectJoinRequest
 );
 
+
+// Explicit creation endpoint for invite-link clients; the QR endpoint remains compatible.
+workplaceRouter.post('/:workplaceId/invite-link', requireWorkplaceMember(), requireWorkplaceRole(['EMPLOYER']), workplaceController.getJoinQr);

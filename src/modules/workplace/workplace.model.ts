@@ -6,6 +6,9 @@ export interface IWorkplace extends Document {
   ownerId: Types.ObjectId;
   timezone: string;
   address?: string;
+  description?: string;
+  joinInviteToken?: string;
+  joinShareUrl?: string;
   wifiSsid?: string;
   attendanceSettings: {
     requireWifi: boolean;
@@ -24,6 +27,9 @@ const workplaceSchema = new Schema<IWorkplace>(
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     timezone: { type: String, default: 'Asia/Kolkata', required: true },
     address: { type: String, trim: true },
+    description: { type: String, trim: true, maxlength: 300 },
+    joinInviteToken: { type: String, unique: true, sparse: true },
+    joinShareUrl: { type: String },
     wifiSsid: { type: String, trim: true },
     attendanceSettings: {
       requireWifi: { type: Boolean, default: false },

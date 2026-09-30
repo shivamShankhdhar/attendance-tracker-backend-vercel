@@ -10,11 +10,11 @@ import { AttendanceSessionModel } from '../src/modules/attendance-session/attend
 import { AttendanceRequestModel } from '../src/modules/attendance-request/attendance-request.model';
 import { AttendanceModel } from '../src/modules/attendance/attendance.model';
 import { WorkplaceJoinRequestModel } from '../src/modules/workplace/workplace-join-request.model';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 let server: http.Server;
 let baseUrl: string;
-let mongod: MongoMemoryServer | null = null;
+let mongod: MongoMemoryReplSet | null = null;
 
 function makeRequest(path: string, options: {
   method?: string;
@@ -64,13 +64,8 @@ function makeRequest(path: string, options: {
 
 describe('Attendance Management System — End-to-End API Suite', () => {
   before(async () => {
-    try {
-      await connectDatabase();
-    } catch {
-      console.log('[Test Suite] Remote MongoDB unavailable. Starting in-memory MongoDB server...');
-      mongod = await MongoMemoryServer.create();
-      await connectDatabase(mongod.getUri());
-    }
+    mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+    await connectDatabase(mongod.getUri());
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -388,6 +383,9 @@ describe('Attendance Management System — End-to-End API Suite', () => {
         headers: { Authorization: `Bearer ${session.accessToken}` },
       });
       assert.equal(forbidden.status, 403);
+      const renewal = await makeRequest('/api/v1/auth/refresh', { method: 'POST', body: { refreshToken: session.refreshToken } });
+      assert.equal(renewal.status, 200);
+      assert.ok(renewal.body.data.refreshToken);
       const logout = await makeRequest('/api/v1/auth/logout', {
         method: 'POST', headers: { Authorization: `Bearer ${session.accessToken}` },
       });
@@ -396,6 +394,8 @@ describe('Attendance Management System — End-to-End API Suite', () => {
         method: 'POST', body: { refreshToken: session.refreshToken },
       });
       assert.equal(refresh.status, 401);
+      const renewedRefresh = await makeRequest('/api/v1/auth/refresh', { method: 'POST', body: { refreshToken: renewal.body.data.refreshToken } });
+      assert.equal(renewedRefresh.status, 401);
     } finally {
       await WorkplaceMemberModel.deleteOne({ _id: added.body.data.employee.id });
       await UserModel.deleteOne({ _id: session.user.id });
@@ -427,12 +427,30 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     });
     assert.equal(joinQrRes.status, 200);
     assert.ok(joinQrRes.body.data.qrToken);
-    assert.ok(joinQrRes.body.data.qrPayload.startsWith('attendance://join?'));
-    assert.ok(joinQrRes.body.data.deepLink.startsWith('bizora://join?'));
-    assert.ok(joinQrRes.body.data.joinLink.startsWith('https://bizora.app/join?'));
+    assert.equal(joinQrRes.body.data.qrPayload, joinQrRes.body.data.joinLink);
+    assert.ok(joinQrRes.body.data.deepLink.startsWith('bizora://join/'));
+    assert.ok(joinQrRes.body.data.joinLink.startsWith('https://bizora.app/join/'));
     const joinQrToken = joinQrRes.body.data.qrToken;
+    const unavailableDetails = await makeRequest(`/api/v1/workplaces/${workplaceId}`, {
+      headers: { Authorization: `Bearer ${candidateToken}` },
+    });
+    assert.equal(unavailableDetails.status, 403);
+
     const shareableJoinLink = joinQrRes.body.data.joinLink;
     const workplaceCode = workplaceId.slice(-6).toUpperCase();
+
+    const landing = await makeRequest('/api/v1/workplaces/join-landing', {
+      method: 'POST', body: { token: shareableJoinLink },
+    });
+    assert.equal(landing.status, 200);
+    assert.equal(landing.body.data.workplaceId, workplaceId);
+    assert.equal(landing.body.data.workplaceCode, workplaceCode);
+    assert.equal(landing.body.data.ownerName, undefined);
+    assert.equal(landing.body.data.pendingRequest, undefined);
+    const invalidLanding = await makeRequest('/api/v1/workplaces/join-landing', {
+      method: 'POST', body: { token: 'not-a-valid-invitation' },
+    });
+    assert.equal(invalidLanding.status, 400);
 
     // 3a. Candidate opens shared web/deep link and previews workplace & employer details
     const linkPreviewRes = await makeRequest('/api/v1/workplaces/join-preview', {
@@ -520,6 +538,16 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     );
     assert.equal(approveRes.status, 200);
     assert.equal(approveRes.body.data.employeeCode, 'EMP-ANANYA');
+    const employeeDetails = await makeRequest(`/api/v1/workplaces/${workplaceId}`, {
+      headers: { Authorization: `Bearer ${candidateToken}` },
+    });
+    assert.equal(employeeDetails.status, 200);
+    assert.equal(employeeDetails.body.data.name, 'Test Workplace Central');
+    assert.equal(employeeDetails.body.data.code, workplaceId.slice(-6).toUpperCase());
+    assert.ok(employeeDetails.body.data.memberCount >= 2);
+    assert.equal(employeeDetails.body.data.joinQrSecret, undefined);
+    assert.equal(employeeDetails.body.data.wifiSsid, undefined);
+
 
     // 9. Candidate now checks workplace list and is an ACTIVE EMPLOYEE
     const candidateWorkplacesRes = await makeRequest('/api/v1/workplaces', {
@@ -572,7 +600,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
       headers: { Authorization: `Bearer ${employerToken}` },
       body: { mpin: '0000' },
     });
-    assert.equal(verifyFailRes.status, 401);
+    assert.equal(verifyFailRes.status, 400);
 
     // 5. Change MPIN
     const changeRes = await makeRequest('/api/v1/auth/mpin/change', {
@@ -588,7 +616,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
       headers: { Authorization: `Bearer ${employerToken}` },
       body: { mpin: '2580' },
     });
-    assert.equal(oldVerifyRes.status, 401);
+    assert.equal(oldVerifyRes.status, 400);
 
     const newVerifyRes = await makeRequest('/api/v1/auth/mpin/verify', {
       method: 'POST',
