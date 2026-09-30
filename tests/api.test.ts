@@ -334,6 +334,35 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(manualRes.body.data.attendance.source, 'MANUAL');
   });
 
+  test('Reports and historical roster respect dates, employee/status filters and role access', async () => {
+    const headers = { Authorization: `Bearer ${employerToken}` };
+    const date = '2025-02-20';
+    const saved = await makeRequest(`/api/v1/workplaces/${workplaceId}/attendance/manual`, {
+      method: 'POST', headers,
+      body: { employeeMemberId, attendanceDate: date, status: 'PRESENT', correctionReason: 'Historical record correction' },
+    });
+    assert.equal(saved.status, 200);
+    const historical = await makeRequest(`/api/v1/workplaces/${workplaceId}/attendance/today?date=${date}`, { headers });
+    assert.equal(historical.status, 200);
+    assert.equal(historical.body.data.attendanceDate, date);
+    assert.equal(historical.body.data.roster.find((row: any) => row.memberId === employeeMemberId).status, 'PRESENT');
+    const path = `/api/v1/workplaces/${workplaceId}/attendance/reports?startDate=${date}&endDate=${date}&employeeMemberId=${employeeMemberId}`;
+    const report = await makeRequest(`${path}&status=PRESENT`, { headers });
+    assert.equal(report.status, 200);
+    assert.equal(report.body.data.summary.totalRecords, 1);
+    assert.equal(report.body.data.summary.uniqueEmployees, 1);
+    assert.equal(report.body.data.summary.attendancePercentage, 100);
+    assert.equal(report.body.data.daily[0].present, 1);
+    const excluded = await makeRequest(`${path}&status=ABSENT`, { headers });
+    assert.equal(excluded.body.data.summary.totalRecords, 0);
+    const forbidden = await makeRequest(path, { headers: { Authorization: `Bearer ${employeeToken}` } });
+    assert.equal(forbidden.status, 403);
+    for (const query of ['startDate=2025-02-30&endDate=2025-03-01', 'startDate=2025-03-01&endDate=2025-02-20', 'startDate=2025-02-20', 'month=2025-13']) {
+      const invalid = await makeRequest(`/api/v1/workplaces/${workplaceId}/attendance/reports?${query}`, { headers });
+      assert.equal(invalid.status, 400);
+    }
+  });
+
   test('12. Employer closes attendance session; subsequent scan attempts are rejected', async () => {
     const closeRes = await makeRequest(`/api/v1/workplaces/${workplaceId}/attendance-sessions/close`, {
       method: 'POST',

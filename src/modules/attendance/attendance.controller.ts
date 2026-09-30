@@ -6,7 +6,7 @@ import { getParam } from '../../utils/params';
 export class AttendanceController {
   async getTodayRoster(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const roster = await attendanceService.getTodayRoster(getParam(req, 'workplaceId'));
+      const roster = await attendanceService.getTodayRoster(getParam(req, 'workplaceId'), req.query.date as string | undefined);
       res.status(200).json({ success: true, data: roster });
     } catch (error) {
       next(error);

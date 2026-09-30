@@ -3,7 +3,7 @@ import { attendanceController } from './attendance.controller';
 import { validateRequest } from '../../middleware/validateRequest';
 import { authenticate } from '../../middleware/authenticate';
 import { requireWorkplaceMember, requireWorkplaceRole } from '../../middleware/authorize';
-import { manualAttendanceSchema, attendanceHistoryQuerySchema } from './attendance.schema';
+import { manualAttendanceSchema, attendanceHistoryQuerySchema, rosterQuerySchema } from './attendance.schema';
 
 export const attendanceRouter = Router({ mergeParams: true });
 
@@ -13,6 +13,7 @@ attendanceRouter.use(authenticate);
 attendanceRouter.get(
   '/:workplaceId/attendance/today',
   requireWorkplaceMember(),
+  validateRequest({ query: rosterQuerySchema }),
   attendanceController.getTodayRoster
 );
 

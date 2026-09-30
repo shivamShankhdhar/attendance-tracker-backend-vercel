@@ -11,11 +11,12 @@ export class AttendanceService {
   /**
    * Get today's roster showing all active employees and their attendance state
    */
-  async getTodayRoster(workplaceId: string) {
+  async getTodayRoster(workplaceId: string, date?: string) {
     const workplace = await WorkplaceModel.findById(workplaceId);
     if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
 
-    const todayDate = getWorkplaceLocalDate(new Date(), workplace.timezone);
+    const todayDate = date || getWorkplaceLocalDate(new Date(), workplace.timezone);
+    if (todayDate > getWorkplaceLocalDate(new Date(), workplace.timezone)) throw new AppError("Future roster dates are not available", 400, "INVALID_DATE");
 
     // These independent reads share the same workplace/date scope.
     const [employees, attendances, requests] = await Promise.all([
@@ -123,7 +124,7 @@ export class AttendanceService {
   /**
    * Employer reports: summary and date range breakdown
    */
-  async getReports(workplaceId: string, query: { month?: string; startDate?: string; endDate?: string }) {
+  async getReports(workplaceId: string, query: { month?: string; startDate?: string; endDate?: string; status?: AttendanceStatus; employeeMemberId?: string }) {
     const workplace = await WorkplaceModel.findById(workplaceId);
     if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
 
@@ -138,6 +139,9 @@ export class AttendanceService {
       const currentMonth = getWorkplaceLocalDate(new Date(), workplace.timezone).slice(0, 7);
       filter.attendanceDate = { $regex: `^${currentMonth}` };
     }
+
+    if (query.status) filter.status = query.status;
+    if (query.employeeMemberId) filter.employeeMemberId = new Types.ObjectId(query.employeeMemberId);
 
     const records = await AttendanceModel.find(filter)
       .populate('employeeMemberId', 'name employeeCode')
@@ -155,11 +159,24 @@ export class AttendanceService {
       else if (rec.status === 'LEAVE') leave++;
     }
 
+    const daily = new Map<string, { date: string; present: number; absent: number; halfDay: number; leave: number; total: number }>();
+    for (const record of records) {
+      const day = daily.get(record.attendanceDate) || { date: record.attendanceDate, present: 0, absent: 0, halfDay: 0, leave: 0, total: 0 };
+      day.total++;
+      if (record.status === 'PRESENT') day.present++;
+      if (record.status === 'ABSENT') day.absent++;
+      if (record.status === 'HALF_DAY') day.halfDay++;
+      if (record.status === 'LEAVE') day.leave++;
+      daily.set(day.date, day);
+    }
     const totalDays = records.length;
     const attendancePercentage = totalDays > 0 ? Math.round(((present + halfDay * 0.5) / totalDays) * 100) : 0;
 
     return {
+      daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)),
       summary: {
+        uniqueEmployees: new Set(records.map(rec => rec.employeeMemberId?._id?.toString())).size,
+        daysWithRecords: daily.size,
         totalRecords: totalDays,
         present,
         absent,
