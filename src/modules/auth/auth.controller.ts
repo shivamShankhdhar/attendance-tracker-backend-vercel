@@ -102,11 +102,44 @@ export class AuthController {
     }
   }
 
+  async requestMpinOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { purpose } = req.body;
+      const data = await authService.requestMpinOtp(req.user.userId, purpose);
+      res.status(200).json({ success: true, message: data.message, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async verifyMpinOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { otp, purpose } = req.body;
+      const data = await authService.verifyMpinOtp(req.user.userId, otp, purpose);
+      res.status(200).json({ success: true, message: data.message, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resetMpin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { mpin, resetToken, enableBiometric } = req.body;
+      const data = await authService.resetMpin(req.user.userId, mpin, resetToken, enableBiometric);
+      res.status(200).json({ success: true, message: 'MPIN reset successfully', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async changeMpin(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const { oldMpin, newMpin } = req.body;
-      const data = await authService.changeMpin(req.user.userId, oldMpin, newMpin);
+      const { oldMpin, newMpin, resetToken } = req.body;
+      const data = await authService.changeMpin(req.user.userId, oldMpin, newMpin, resetToken);
       res.status(200).json({ success: true, message: 'MPIN changed successfully', data });
     } catch (error) {
       next(error);

@@ -11,6 +11,9 @@ import {
   mpinSetupSchema,
   mpinVerifySchema,
   mpinChangeSchema,
+  mpinResetSchema,
+  mpinOtpRequestSchema,
+  mpinOtpVerifySchema,
   mpinBiometricSchema,
 } from './auth.schema';
 
@@ -226,10 +229,26 @@ authRouter.post(
 );
 
 authRouter.post(
+  '/mpin/otp/request',
+  authenticate,
+  authLimiter,
+  validateRequest({ body: mpinOtpRequestSchema }),
+  authController.requestMpinOtp
+);
+
+authRouter.post(
+  '/mpin/otp/verify',
+  authenticate,
+  authLimiter,
+  validateRequest({ body: mpinOtpVerifySchema }),
+  authController.verifyMpinOtp
+);
+
+authRouter.post(
   '/mpin/reset',
   authenticate,
-  validateRequest({ body: mpinSetupSchema }),
-  authController.setupMpin
+  validateRequest({ body: mpinResetSchema }),
+  authController.resetMpin
 );
 
 authRouter.post(

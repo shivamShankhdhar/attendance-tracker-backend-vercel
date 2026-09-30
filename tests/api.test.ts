@@ -10,6 +10,7 @@ import { AttendanceSessionModel } from '../src/modules/attendance-session/attend
 import { AttendanceRequestModel } from '../src/modules/attendance-request/attendance-request.model';
 import { AttendanceModel } from '../src/modules/attendance/attendance.model';
 import { WorkplaceJoinRequestModel } from '../src/modules/workplace/workplace-join-request.model';
+import { MpinOtpModel } from '../src/modules/auth/mpin-otp.model';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
 let server: http.Server;
@@ -641,6 +642,70 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(profileRes.status, 200);
     assert.equal(profileRes.body.data.user.hasMpin, true);
     assert.equal(profileRes.body.data.user.biometricEnabled, false);
+  });
+
+  test('16. Email OTP MPIN reset and change security flow: request OTP, verify OTP, and reset MPIN', async () => {
+    // 1. Request OTP for MPIN reset
+    const otpReqRes = await makeRequest('/api/v1/auth/mpin/otp/request', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { purpose: 'RESET_MPIN' },
+    });
+    assert.equal(otpReqRes.status, 200);
+    assert.ok(otpReqRes.body.data.maskedEmail);
+    assert.equal(otpReqRes.body.data.expiresInSeconds, 600);
+
+    // Rate-limit check: requesting immediately again should be rate-limited
+    const rateLimitRes = await makeRequest('/api/v1/auth/mpin/otp/request', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { purpose: 'RESET_MPIN' },
+    });
+    assert.equal(rateLimitRes.status, 429);
+
+    // 2. Fetch the generated OTP from test DB for automated verification
+    const otpDoc = await MpinOtpModel.findOne({ purpose: 'RESET_MPIN' }).sort({ createdAt: -1 });
+    assert.ok(otpDoc);
+
+    // 3. Entering wrong OTP fails with 400 and returns attempts remaining
+    const wrongOtpRes = await makeRequest('/api/v1/auth/mpin/otp/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { otp: '000000', purpose: 'RESET_MPIN' },
+    });
+    assert.equal(wrongOtpRes.status, 400);
+
+    // 4. Manually set known hash or create verified state
+    const { hashPin } = await import('../src/utils/crypto');
+    otpDoc.otpHash = await hashPin('123456');
+    await otpDoc.save();
+
+    // 5. Verify with correct OTP returns single-use resetToken
+    const verifyOtpRes = await makeRequest('/api/v1/auth/mpin/otp/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { otp: '123456', purpose: 'RESET_MPIN' },
+    });
+    assert.equal(verifyOtpRes.status, 200);
+    assert.ok(verifyOtpRes.body.data.resetToken);
+    const resetToken = verifyOtpRes.body.data.resetToken;
+
+    // 6. Reset MPIN using resetToken succeeds
+    const resetRes = await makeRequest('/api/v1/auth/mpin/reset', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '4455', resetToken },
+    });
+    assert.equal(resetRes.status, 200);
+
+    // 7. Verify new MPIN works
+    const newVerifyRes = await makeRequest('/api/v1/auth/mpin/verify', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${employerToken}` },
+      body: { mpin: '4455' },
+    });
+    assert.equal(newVerifyRes.status, 200);
+    assert.equal(newVerifyRes.body.data.verified, true);
   });
 });
 

@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { Types } from 'mongoose';
 import { OAuth2Client } from 'google-auth-library';
 import { UserModel, IUser } from './user.model';
+import { MpinOtpModel } from './mpin-otp.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
 import { WorkplaceJoinRequestModel } from '../workplace/workplace-join-request.model';
@@ -8,6 +10,55 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { verifyPin, hashPin } from '../../utils/crypto';
 import { AppError } from '../../middleware/errorHandler';
 import { googleClientIds, env } from '../../config/env';
+import { emailService } from '../../services/email.service';
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  if (local.length <= 2) return `${local[0]}*@${domain}`;
+  return `${local[0]}${'*'.repeat(Math.max(1, local.length - 2))}${local.slice(-1)}@${domain}`;
+}
+
+/**
+ * Progressive lockout schedule:
+ * 5 failed attempts: 30 seconds
+ * 6 failed attempts: 2 minutes (120s)
+ * 7 failed attempts: 5 minutes (300s)
+ * 8 failed attempts: 10 minutes (600s)
+ * 9 failed attempts: 20 minutes (1200s)
+ * 10+ failed attempts: 24 hours (86400s)
+ */
+export function getMpinLockoutDurationSeconds(attempts: number): number {
+  if (attempts < 5) return 0;
+  switch (attempts) {
+    case 5:
+      return 30; // 30 seconds
+    case 6:
+      return 2 * 60; // 2 minutes (120s)
+    case 7:
+      return 5 * 60; // 5 minutes (300s)
+    case 8:
+      return 10 * 60; // 10 minutes (600s)
+    case 9:
+      return 20 * 60; // 20 minutes (1200s)
+    default:
+      return 24 * 60 * 60; // 24 hours (86400s)
+  }
+}
+
+export function formatLockoutDuration(seconds: number): string {
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours} hour${hours > 1 ? 's' : ''}`;
+  }
+  if (seconds >= 60) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins} minute${mins > 1 ? 's' : ''}`;
+  }
+  return `${seconds} seconds`;
+}
 
 const googleClient = new OAuth2Client();
 
@@ -443,18 +494,30 @@ export class AuthService {
       if (!user.mpinHash) throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
       const now = Date.now();
       if (user.mpinLockedUntil && user.mpinLockedUntil.getTime() > now) {
-        throw new AppError('Too many incorrect MPIN attempts. Try again after 30 minutes.', 429, 'MPIN_LOCKED', {
-          attemptsRemaining: 0, lockedUntil: user.mpinLockedUntil.toISOString(),
-          retryAfterSeconds: Math.ceil((user.mpinLockedUntil.getTime() - now) / 1000),
-        });
+        const retryAfterSeconds = Math.ceil((user.mpinLockedUntil.getTime() - now) / 1000);
+        throw new AppError(
+          `Too many incorrect MPIN attempts. Try again in ${formatLockoutDuration(retryAfterSeconds)}.`,
+          429,
+          'MPIN_LOCKED',
+          {
+            attemptsRemaining: 0,
+            lockedUntil: user.mpinLockedUntil.toISOString(),
+            retryAfterSeconds,
+          }
+        );
       }
       if (checkedHash !== user.mpinHash) {
         checkedHash = user.mpinHash;
         valid = await verifyPin(mpin, checkedHash);
       }
-      const previousAttempts = user.mpinLockedUntil ? 0 : (user.mpinFailedAttempts || 0);
+      // If the lockout expired more than 24 hours ago, reset attempt count window
+      const isLockoutExpiredLongAgo = Boolean(
+        user.mpinLockedUntil && now - user.mpinLockedUntil.getTime() > 24 * 60 * 60 * 1000
+      );
+      const previousAttempts = isLockoutExpiredLongAgo ? 0 : (user.mpinFailedAttempts || 0);
       const attempts = valid ? 0 : previousAttempts + 1;
-      const lockedUntil = attempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
+      const lockoutSeconds = getMpinLockoutDurationSeconds(attempts);
+      const lockedUntil = lockoutSeconds > 0 ? new Date(now + lockoutSeconds * 1000) : null;
       const updated = await UserModel.findOneAndUpdate({
         _id: user._id, mpinHash: checkedHash,
         $expr: { $eq: [{ $ifNull: ['$mpinAttemptVersion', 0] }, user.mpinAttemptVersion || 0] },
@@ -463,19 +526,158 @@ export class AuthService {
         $inc: { mpinAttemptVersion: 1 },
       });
       if (!updated) continue;
-      if (lockedUntil) throw new AppError('Too many incorrect MPIN attempts. Try again after 30 minutes.', 429, 'MPIN_LOCKED', {
-        attemptsRemaining: 0, lockedUntil: lockedUntil.toISOString(), retryAfterSeconds: 1800,
-      });
-      if (!valid) throw new AppError(`Incorrect MPIN. ${5 - attempts} attempts remaining.`, 400, 'INVALID_MPIN', { attemptsRemaining: 5 - attempts, lockedUntil: null });
+      if (lockedUntil) {
+        throw new AppError(
+          `Too many incorrect MPIN attempts. Try again in ${formatLockoutDuration(lockoutSeconds)}.`,
+          429,
+          'MPIN_LOCKED',
+          {
+            attemptsRemaining: 0,
+            lockedUntil: lockedUntil.toISOString(),
+            retryAfterSeconds: lockoutSeconds,
+          }
+        );
+      }
+      if (!valid) {
+        throw new AppError(
+          `Incorrect MPIN. ${Math.max(0, 5 - attempts)} attempts remaining.`,
+          400,
+          'INVALID_MPIN',
+          { attemptsRemaining: Math.max(0, 5 - attempts), lockedUntil: null }
+        );
+      }
       return { verified: true, attemptsRemaining: 5, lockedUntil: null };
     }
   }
 
   /**
-   * Change 4-digit MPIN
+   * Request Email OTP for MPIN Reset or Change
    */
-  async changeMpin(userId: string, oldMpin: string, newMpin: string) {
-    if (!/^\d{4}$/.test(oldMpin) || !/^\d{4}$/.test(newMpin)) {
+  async requestMpinOtp(userId: string, purpose: 'RESET_MPIN' | 'CHANGE_MPIN') {
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    if (!user.email) {
+      throw new AppError(
+        'No registered email address found for this account. Please link your Google email first.',
+        400,
+        'NO_EMAIL_CONFIGURED'
+      );
+    }
+
+    // Rate-limit: Check if an OTP was generated within the last 30 seconds
+    const existing = await MpinOtpModel.findOne({
+      userId: user._id,
+      purpose,
+      createdAt: { $gt: new Date(Date.now() - 30 * 1000) },
+    });
+    if (existing) {
+      const waitSeconds = Math.ceil((existing.createdAt.getTime() + 30 * 1000 - Date.now()) / 1000);
+      throw new AppError(
+        `Please wait ${waitSeconds} seconds before requesting a new verification code.`,
+        429,
+        'OTP_RATE_LIMITED'
+      );
+    }
+
+    // Generate random 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpHash = await hashPin(otp);
+
+    // Remove any previous pending OTPs for this user and purpose
+    await MpinOtpModel.deleteMany({ userId: user._id, purpose });
+
+    // Store in DB with 10-minute expiry
+    await MpinOtpModel.create({
+      userId: user._id,
+      email: user.email.toLowerCase(),
+      otpHash,
+      purpose,
+      attempts: 0,
+      isVerified: false,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    // Send formatted email
+    await emailService.sendMpinOtpEmail({
+      toEmail: user.email,
+      userName: user.name,
+      otp,
+      purpose,
+    });
+
+    return {
+      success: true,
+      maskedEmail: maskEmail(user.email),
+      expiresInSeconds: 600,
+      message: `Verification code sent to ${maskEmail(user.email)}`,
+    };
+  }
+
+  /**
+   * Verify the 6-digit Email OTP
+   */
+  async verifyMpinOtp(userId: string, otp: string, purpose: 'RESET_MPIN' | 'CHANGE_MPIN') {
+    if (!/^\d{6}$/.test(otp)) {
+      throw new AppError('Verification code must be exactly 6 numeric digits', 400, 'INVALID_OTP_FORMAT');
+    }
+
+    const record = await MpinOtpModel.findOne({
+      userId,
+      purpose,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!record) {
+      throw new AppError(
+        'Verification code has expired or was not requested. Please request a new code.',
+        400,
+        'OTP_EXPIRED'
+      );
+    }
+
+    if (record.attempts >= 5) {
+      await MpinOtpModel.deleteOne({ _id: record._id });
+      throw new AppError(
+        'Too many incorrect verification attempts. Please request a new code.',
+        429,
+        'OTP_MAX_ATTEMPTS'
+      );
+    }
+
+    const isMatch = await verifyPin(otp, record.otpHash);
+    if (!isMatch) {
+      record.attempts += 1;
+      await record.save();
+      const remaining = Math.max(0, 5 - record.attempts);
+      throw new AppError(
+        `Incorrect verification code. ${remaining} attempts remaining.`,
+        400,
+        'INVALID_OTP',
+        { attemptsRemaining: remaining }
+      );
+    }
+
+    // Valid OTP! Issue single-use resetToken
+    const resetToken = crypto.randomUUID();
+    record.isVerified = true;
+    record.resetToken = resetToken;
+    await record.save();
+
+    return {
+      verified: true,
+      resetToken,
+      message: 'Email identity verified successfully',
+    };
+  }
+
+  /**
+   * Reset 4-digit MPIN with verified Email OTP resetToken (or setup)
+   */
+  async resetMpin(userId: string, newMpin: string, resetToken?: string, enableBiometric?: boolean) {
+    if (!/^\d{4}$/.test(newMpin)) {
       throw new AppError('MPIN must be exactly 4 numeric digits', 400, 'INVALID_MPIN_FORMAT');
     }
 
@@ -484,15 +686,80 @@ export class AuthService {
       throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
     }
 
-    if (!user.mpinHash) {
-      throw new AppError('MPIN is not set up for this account', 400, 'MPIN_NOT_SET');
+    if (resetToken) {
+      const otpRecord = await MpinOtpModel.findOne({
+        userId: user._id,
+        resetToken,
+        purpose: 'RESET_MPIN',
+        isVerified: true,
+        expiresAt: { $gt: new Date() },
+      });
+
+      if (!otpRecord) {
+        throw new AppError('Invalid or expired verification session. Please verify via email again.', 401, 'INVALID_RESET_TOKEN');
+      }
+
+      // Consume the token
+      await MpinOtpModel.deleteMany({ userId: user._id, purpose: 'RESET_MPIN' });
     }
 
-    await this.verifyMpin(userId, oldMpin);
+    const hashed = await hashPin(newMpin);
+    const updated = await UserModel.findOneAndUpdate({
+      _id: user._id,
+    }, {
+      $set: {
+        mpinHash: hashed,
+        hasMpin: true,
+        mpinFailedAttempts: 0,
+        mpinLockedUntil: null,
+        ...(typeof enableBiometric === 'boolean' ? { biometricEnabled: enableBiometric } : {}),
+      },
+      $inc: { mpinAttemptVersion: 1 },
+    }, { new: true });
+
+    return {
+      hasMpin: true,
+      biometricEnabled: Boolean(updated?.biometricEnabled),
+      message: 'MPIN reset successfully',
+    };
+  }
+
+  /**
+   * Change 4-digit MPIN (via old MPIN or via verified Email OTP resetToken)
+   */
+  async changeMpin(userId: string, oldMpin?: string, newMpin?: string, resetToken?: string) {
+    if (!newMpin || !/^\d{4}$/.test(newMpin)) {
+      throw new AppError('New MPIN must be exactly 4 numeric digits', 400, 'INVALID_MPIN_FORMAT');
+    }
+
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    if (resetToken) {
+      const otpRecord = await MpinOtpModel.findOne({
+        userId: user._id,
+        resetToken,
+        purpose: 'CHANGE_MPIN',
+        isVerified: true,
+        expiresAt: { $gt: new Date() },
+      });
+      if (!otpRecord) {
+        throw new AppError('Invalid or expired email verification session. Please verify via email again.', 401, 'INVALID_RESET_TOKEN');
+      }
+      await MpinOtpModel.deleteMany({ userId: user._id, purpose: 'CHANGE_MPIN' });
+    } else if (oldMpin) {
+      await this.verifyMpin(userId, oldMpin);
+    } else {
+      throw new AppError('Either current MPIN or email verification code is required', 400, 'AUTHORIZATION_REQUIRED');
+    }
 
     const newHashed = await hashPin(newMpin);
     user.mpinHash = newHashed;
     user.hasMpin = true;
+    user.mpinFailedAttempts = 0;
+    user.mpinLockedUntil = null;
     await user.save();
 
     return { success: true, message: 'MPIN changed successfully' };
@@ -526,8 +793,13 @@ export class AuthService {
     }
 
     const locked = Boolean(user.mpinLockedUntil && user.mpinLockedUntil.getTime() > Date.now());
+    const attemptsRemaining = locked
+      ? 0
+      : (user.mpinFailedAttempts || 0) >= 5
+      ? 1
+      : Math.max(0, 5 - (user.mpinFailedAttempts || 0));
     return {
-      attemptsRemaining: locked ? 0 : user.mpinLockedUntil ? 5 : Math.max(0, 5 - (user.mpinFailedAttempts || 0)),
+      attemptsRemaining,
       lockedUntil: locked ? user.mpinLockedUntil?.toISOString() : null,
       hasMpin: Boolean(user.hasMpin || user.mpinHash),
       biometricEnabled: Boolean(user.biometricEnabled),
