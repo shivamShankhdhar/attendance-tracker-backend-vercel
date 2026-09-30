@@ -160,11 +160,7 @@ authRouter.get('/google/callback', (req, res) => {
 
       // Fallback secondary attempts
       setTimeout(function() {
-        if (targetReturnUrl.startsWith('exp://')) {
-          window.location.href = finalAppUrl;
-        } else {
-          window.location.href = "quickattendance://auth?" + raw;
-        }
+        window.location.href = finalAppUrl;
       }, 600);
     })();
 
