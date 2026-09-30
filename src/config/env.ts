@@ -39,7 +39,7 @@ if (!parsedEnv.success) {
       GOOGLE_CLIENT_IDS: process.env.GOOGLE_CLIENT_IDS || '',
       RETRY_SECRET: process.env.RETRY_SECRET || 'dev_retry_secret',
       APP_NAME: process.env.APP_NAME || 'Bizora',
-      WORKPLACE_JOIN_URL: process.env.WORKPLACE_JOIN_URL || 'https://bizora.app/join',
+      WORKPLACE_JOIN_URL: process.env.WORKPLACE_JOIN_URL || 'https://www.bizora.shivamshankhdhar.online/join',
     };
   } else {
     process.exit(1);
