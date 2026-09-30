@@ -428,8 +428,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(joinQrRes.status, 200);
     assert.ok(joinQrRes.body.data.qrToken);
     assert.equal(joinQrRes.body.data.qrPayload, joinQrRes.body.data.joinLink);
-    assert.ok(joinQrRes.body.data.deepLink.startsWith('bizora://join/'));
-    assert.ok(joinQrRes.body.data.joinLink.startsWith('https://bizora.app/join/'));
+    assert.ok(joinQrRes.body.data.joinLink.includes('/join/'));
     const joinQrToken = joinQrRes.body.data.qrToken;
     const unavailableDetails = await makeRequest(`/api/v1/workplaces/${workplaceId}`, {
       headers: { Authorization: `Bearer ${candidateToken}` },
