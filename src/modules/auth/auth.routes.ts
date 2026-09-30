@@ -137,14 +137,14 @@ authRouter.get('/google/callback', (req, res) => {
       if (stateParam) {
         try {
           var decoded = decodeURIComponent(stateParam);
-          if (decoded.startsWith('exp://') || decoded.startsWith('quickattendance://') || decoded.startsWith('frontend://') || decoded.startsWith('http')) {
+          if (decoded.startsWith('exp://') || decoded.startsWith('bizora://') || decoded.startsWith('quickattendance://') || decoded.startsWith('frontend://') || decoded.startsWith('http')) {
             targetReturnUrl = decoded;
           }
         } catch(e) {}
       }
 
       if (!targetReturnUrl) {
-        targetReturnUrl = "quickattendance://auth";
+        targetReturnUrl = "bizora://auth";
       }
 
       var sep = targetReturnUrl.includes('?') ? '&' : (targetReturnUrl.includes('#') ? '&' : '?');
