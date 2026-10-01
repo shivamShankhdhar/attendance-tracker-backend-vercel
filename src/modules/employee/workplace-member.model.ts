@@ -10,6 +10,7 @@ export interface IWorkplaceMember extends Document {
   invitedEmail?: string;
   pinHash?: string;
   status: 'INVITED' | 'ACTIVE' | 'INACTIVE';
+  invitationCode?: string;
   invitationTokenHash?: string;
   invitationExpiresAt?: Date;
   joinedAt?: Date;
@@ -33,6 +34,7 @@ const workplaceMemberSchema = new Schema<IWorkplaceMember>(
       required: true,
       index: true,
     },
+    invitationCode: { type: String, index: { unique: true, sparse: true }, lowercase: true, trim: true },
     invitationTokenHash: { type: String, index: { unique: true, sparse: true } },
     invitationExpiresAt: { type: Date },
     joinedAt: { type: Date },

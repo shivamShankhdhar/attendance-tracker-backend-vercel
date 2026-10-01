@@ -197,15 +197,26 @@ export class WorkplaceService {
    */
   private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; secret?: string; isCodeLookup?: boolean }> {
     let tokenStr = rawInput.trim();
-    // Handle bizora://join?token=... or attendance://join?token=... or https://...?token=...
-    if (tokenStr.includes('token=')) {
+    // Handle surrounding quotes
+    tokenStr = tokenStr.replace(/^["']|["']$/g, '').trim();
+
+    // Handle custom app schemes like bizora://join/509e-250a8 or bizora://join?token=...
+    if (tokenStr.startsWith('bizora://')) {
+      const pathPart = tokenStr.replace(/^bizora:\/\/join\/?/, '').replace(/^bizora:\/\//, '');
+      if (pathPart && !pathPart.includes('?') && !pathPart.includes('=')) {
+        tokenStr = decodeURIComponent(pathPart);
+      }
+    }
+
+    // Handle bizora://join?token=... or ?code=... or https://...?token=...
+    if (tokenStr.includes('token=') || tokenStr.includes('code=') || tokenStr.includes('invite=')) {
       try {
         const normalized = tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
         const url = new URL(normalized);
-        const qToken = url.searchParams.get('token');
+        const qToken = url.searchParams.get('token') || url.searchParams.get('code') || url.searchParams.get('invite');
         if (qToken) tokenStr = qToken;
       } catch {
-        const match = tokenStr.match(/token=([^&]+)/);
+        const match = tokenStr.match(/(?:token|code|invite)=([^&]+)/);
         if (match) tokenStr = decodeURIComponent(match[1]);
       }
     } else if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
@@ -218,10 +229,73 @@ export class WorkplaceService {
     }
 
     try {
-      const url = new URL(tokenStr);
-      const match = url.pathname.match(/\/join\/([^/]+)\/?$/);
-      if (match) tokenStr = decodeURIComponent(match[1]);
+      const url = new URL(tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/'));
+      const match = url.pathname.match(/\/join\/([^/]+)\/?$/) || url.pathname.match(/\/([^/]+)\/?$/);
+      if (match && match[1] !== 'dummy') tokenStr = decodeURIComponent(match[1]);
     } catch { /* Raw token or workplace code. */ }
+
+    // Check if token has structured employee invite format:
+    // {workplaceId}-{employeeId} (10 chars e.g. e912-be91c) or legacy {wpId}-{empId}-{timestamp}
+    const tokenParts = tokenStr.split('-');
+    if (tokenParts.length === 2) {
+      const [wpPart, empPart] = tokenParts;
+      const member = await WorkplaceMemberModel.findOne({
+        $and: [
+          {
+            $or: [
+              { invitationCode: tokenStr.toLowerCase() },
+              { invitationTokenHash: hashToken(tokenStr.toLowerCase()) },
+              { invitationTokenHash: hashToken(tokenStr) },
+              {
+                $expr: {
+                  $and: [
+                    { $regexMatch: { input: { $toString: '$_id' }, regex: `${empPart}$`, options: 'i' } },
+                    { $regexMatch: { input: { $toString: '$workplaceId' }, regex: `${wpPart}$`, options: 'i' } },
+                  ],
+                },
+              },
+            ],
+          },
+          {
+            $or: [
+              { invitationExpiresAt: { $gt: new Date() } },
+              { invitationExpiresAt: { $exists: false } },
+            ],
+          },
+        ],
+      });
+      if (member) {
+        const wp = await WorkplaceModel.findById(member.workplaceId);
+        if (wp) {
+          return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
+        }
+      }
+      const activeWorkplaces = await WorkplaceModel.find({ status: 'ACTIVE' });
+      const matchedWp = activeWorkplaces.find((w) => w._id.toString().toLowerCase().endsWith(wpPart.toLowerCase()));
+      if (matchedWp) {
+        return { workplaceId: matchedWp._id.toString(), secret: matchedWp.joinQrSecret, isCodeLookup: true };
+      }
+    } else if (tokenParts.length >= 3 && Types.ObjectId.isValid(tokenParts[0]) && Types.ObjectId.isValid(tokenParts[1])) {
+      const [wpId, empId] = tokenParts;
+      const member = await WorkplaceMemberModel.findOne({
+        _id: new Types.ObjectId(empId),
+        workplaceId: new Types.ObjectId(wpId),
+        $or: [
+          { invitationExpiresAt: { $gt: new Date() } },
+          { invitationExpiresAt: { $exists: false } },
+        ],
+      });
+      if (member) {
+        const wp = await WorkplaceModel.findById(member.workplaceId);
+        if (wp) {
+          return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
+        }
+      }
+      const directWp = await WorkplaceModel.findById(wpId);
+      if (directWp) {
+        return { workplaceId: directWp._id.toString(), secret: directWp.joinQrSecret, isCodeLookup: true };
+      }
+    }
 
     if (/^[a-f0-9]{64}$/.test(tokenStr)) {
       const invited = await WorkplaceModel.findOne({ joinInviteToken: tokenStr });
@@ -363,7 +437,7 @@ export class WorkplaceService {
     return workplace;
   }
 
-  async publicJoinPreview(rawToken: string) {
+  async publicJoinPreview(rawToken: string, includeOwner = false) {
     const workplace = await this.resolveJoinWorkplace(rawToken);
     let installLink = workplace.joinShareUrl;
     if (!installLink && workplace.joinInviteToken) {
@@ -372,7 +446,8 @@ export class WorkplaceService {
       landing.search = '';
       installLink = landing.toString();
     }
-    return {
+
+    const baseResult: any = {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
       workplaceCode: workplace._id.toString().slice(-6).toUpperCase(),
@@ -380,6 +455,20 @@ export class WorkplaceService {
       description: workplace.description,
       installLink,
     };
+
+    if (includeOwner) {
+      const [owner, activeMembersCount] = await Promise.all([
+        UserModel.findById(workplace.ownerId).select('name'),
+        WorkplaceMemberModel.countDocuments({
+          workplaceId: workplace._id,
+          status: { $in: ['ACTIVE', 'INVITED'] },
+        }),
+      ]);
+      baseResult.ownerName = owner?.name || 'Workplace Admin';
+      baseResult.activeMembersCount = Math.max(1, activeMembersCount);
+    }
+
+    return baseResult;
   }
 
   async previewJoin(userId: string, rawToken: string) {
@@ -394,7 +483,7 @@ export class WorkplaceService {
 
     // Check if user has an INVITED membership (directly added by employer)
     const userDoc = await UserModel.findById(userId);
-    const invitedMember = await WorkplaceMemberModel.findOne({
+    let invitedMember = await WorkplaceMemberModel.findOne({
       workplaceId: workplace._id,
       $or: [
         ...(userDoc?.email ? [{ invitedEmail: userDoc.email.toLowerCase() }] : []),
@@ -402,6 +491,44 @@ export class WorkplaceService {
       ],
       status: 'INVITED',
     });
+
+    if (!invitedMember && rawToken) {
+      const cleanToken = rawToken.trim();
+      const parts = cleanToken.split('-');
+      if (parts.length === 2) {
+        const [wpPart, empPart] = parts;
+        invitedMember = await WorkplaceMemberModel.findOne({
+          workplaceId: workplace._id,
+          $or: [
+            { invitationCode: cleanToken.toLowerCase() },
+            { invitationTokenHash: hashToken(cleanToken.toLowerCase()) },
+            {
+              $expr: {
+                $regexMatch: { input: { $toString: '$_id' }, regex: `${empPart}$`, options: 'i' },
+              },
+            },
+          ],
+          status: 'INVITED',
+        });
+      } else if (parts.length >= 3 && Types.ObjectId.isValid(parts[1])) {
+        invitedMember = await WorkplaceMemberModel.findOne({
+          _id: new Types.ObjectId(parts[1]),
+          workplaceId: workplace._id,
+          status: 'INVITED',
+        });
+      }
+      if (!invitedMember) {
+        invitedMember = await WorkplaceMemberModel.findOne({
+          workplaceId: workplace._id,
+          $or: [
+            { invitationCode: cleanToken.toLowerCase() },
+            { invitationTokenHash: hashToken(cleanToken.toLowerCase()) },
+            { invitationTokenHash: hashToken(cleanToken) },
+          ],
+          status: 'INVITED',
+        });
+      }
+    }
 
     // Check if user has an existing PENDING request
     const pendingRequest = await WorkplaceJoinRequestModel.findOne({
@@ -465,7 +592,7 @@ export class WorkplaceService {
 
     // If user is already an INVITED member added manually by the employer, directly join!
     // No employer approval is needed!
-    const invitedMember = await WorkplaceMemberModel.findOne({
+    let invitedMember = await WorkplaceMemberModel.findOne({
       workplaceId: workplace._id,
       $or: [
         ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : []),
@@ -474,10 +601,49 @@ export class WorkplaceService {
       status: 'INVITED',
     });
 
+    if (!invitedMember && data.token) {
+      const cleanToken = data.token.trim();
+      const parts = cleanToken.split('-');
+      if (parts.length === 2) {
+        const [wpPart, empPart] = parts;
+        invitedMember = await WorkplaceMemberModel.findOne({
+          workplaceId: workplace._id,
+          $or: [
+            { invitationCode: cleanToken.toLowerCase() },
+            { invitationTokenHash: hashToken(cleanToken.toLowerCase()) },
+            {
+              $expr: {
+                $regexMatch: { input: { $toString: '$_id' }, regex: `${empPart}$`, options: 'i' },
+              },
+            },
+          ],
+          status: 'INVITED',
+        });
+      } else if (parts.length >= 3 && Types.ObjectId.isValid(parts[1])) {
+        invitedMember = await WorkplaceMemberModel.findOne({
+          _id: new Types.ObjectId(parts[1]),
+          workplaceId: workplace._id,
+          status: 'INVITED',
+        });
+      }
+      if (!invitedMember) {
+        invitedMember = await WorkplaceMemberModel.findOne({
+          workplaceId: workplace._id,
+          $or: [
+            { invitationCode: cleanToken.toLowerCase() },
+            { invitationTokenHash: hashToken(cleanToken.toLowerCase()) },
+            { invitationTokenHash: hashToken(cleanToken) },
+          ],
+          status: 'INVITED',
+        });
+      }
+    }
+
     if (invitedMember) {
       invitedMember.userId = user._id;
       invitedMember.status = 'ACTIVE';
       invitedMember.joinedAt = new Date();
+      invitedMember.invitationCode = undefined;
       invitedMember.invitationTokenHash = undefined;
       await invitedMember.save();
 
@@ -522,15 +688,24 @@ export class WorkplaceService {
     }
 
     // The unique pending index prevents duplicate requests on rapid taps/retries.
-    const joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' }, { $setOnInsert: {
-      workplaceId: workplace._id,
-      userId: user._id,
-      name: user.name,
-      email: user.email,
-      avatarUrl: user.avatarUrl,
-      note: data.note?.trim(),
-      status: 'PENDING',
-    } }, { upsert: true, new: true, runValidators: true });
+    let joinReq: any;
+    try {
+      joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' }, { $setOnInsert: {
+        workplaceId: workplace._id,
+        userId: user._id,
+        name: user.name,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        note: data.note?.trim(),
+        status: 'PENDING',
+      } }, { upsert: true, new: true, runValidators: true });
+    } catch (err: any) {
+      if (err.code === 11000) {
+        joinReq = await WorkplaceJoinRequestModel.findOne({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' });
+      } else {
+        throw err;
+      }
+    }
 
     await AuditLogModel.create({
       workplaceId: workplace._id,
@@ -705,6 +880,96 @@ export class WorkplaceService {
         metadata: { userId: joinReq.userId.toString(), reason: data?.reason } }], { session });
       return { message: 'Join request rejected', requestId: joinReq._id.toString() };
     });
+  }
+
+  /**
+   * Start Wi-Fi radar listening session (EMPLOYER only)
+   */
+  async startWifiRadar(workplaceId: string, actorId: string, data?: { wifiSsid?: string }) {
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+
+    const ssid = data?.wifiSsid?.trim() || workplace.wifiSsid || 'Office Wi-Fi';
+    const startedAt = new Date();
+    const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours auto-close
+
+    workplace.wifiRadarSession = {
+      isActive: true,
+      wifiSsid: ssid,
+      startedBy: new Types.ObjectId(actorId),
+      startedAt,
+      expiresAt,
+    };
+    await workplace.save();
+
+    await AuditLogModel.create({
+      workplaceId: new Types.ObjectId(workplaceId),
+      actorId: new Types.ObjectId(actorId),
+      action: 'WIFI_RADAR_STARTED',
+      entityId: workplace._id.toString(),
+      metadata: { wifiSsid: ssid },
+    });
+
+    return {
+      message: 'Wi-Fi radar listening started',
+      session: {
+        isActive: true,
+        wifiSsid: ssid,
+        startedAt,
+        expiresAt,
+      },
+    };
+  }
+
+  /**
+   * Stop Wi-Fi radar listening session (EMPLOYER only)
+   */
+  async stopWifiRadar(workplaceId: string, actorId: string) {
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+
+    if (workplace.wifiRadarSession) {
+      workplace.wifiRadarSession.isActive = false;
+      await workplace.save();
+    }
+
+    await AuditLogModel.create({
+      workplaceId: new Types.ObjectId(workplaceId),
+      actorId: new Types.ObjectId(actorId),
+      action: 'WIFI_RADAR_STOPPED',
+      entityId: workplace._id.toString(),
+    });
+
+    return {
+      message: 'Wi-Fi radar listening stopped',
+      isActive: false,
+    };
+  }
+
+  /**
+   * Get current Wi-Fi radar listening status
+   */
+  async getWifiRadarStatus(workplaceId: string) {
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+
+    const session = workplace.wifiRadarSession;
+    const isExpired = session?.expiresAt ? new Date(session.expiresAt) < new Date() : false;
+    const isActive = Boolean(session?.isActive && !isExpired);
+
+    const { AttendanceRequestModel } = await import('../attendance-request/attendance-request.model');
+    const pendingCount = await AttendanceRequestModel.countDocuments({
+      workplaceId: new Types.ObjectId(workplaceId),
+      status: 'PENDING',
+    });
+
+    return {
+      isActive,
+      wifiSsid: session?.wifiSsid || workplace.wifiSsid || '',
+      startedAt: session?.startedAt || null,
+      expiresAt: session?.expiresAt || null,
+      pendingCount,
+    };
   }
 }
 

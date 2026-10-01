@@ -75,8 +75,11 @@ export class EmployeeService {
       pinHash = await hashPin(data.pin);
     }
 
-    // Generate one-time invitation token
-    const rawInviteToken = generateSecureToken(24);
+    const memberId = new Types.ObjectId();
+    // Compact 10-character invite code: 4 hex digits from workplaceId + '-' + 5 hex digits from new employee memberId
+    const wpPart = workplaceId.slice(-4).toLowerCase();
+    const empPart = memberId.toString().slice(-5).toLowerCase();
+    const rawInviteToken = `${wpPart}-${empPart}`;
     const invitationTokenHash = hashToken(rawInviteToken);
     const invitationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
@@ -87,6 +90,7 @@ export class EmployeeService {
     }
 
     const member = await WorkplaceMemberModel.create({
+      _id: memberId,
       workplaceId: new Types.ObjectId(workplaceId),
       userId: existingUser ? existingUser._id : undefined,
       role: 'EMPLOYEE',
@@ -95,6 +99,7 @@ export class EmployeeService {
       invitedEmail: normEmail,
       pinHash,
       status: 'INVITED',
+      invitationCode: rawInviteToken,
       invitationTokenHash,
       invitationExpiresAt,
     });
@@ -110,19 +115,15 @@ export class EmployeeService {
 
     // Generate workplace join link and dispatch invitation email if email is provided
     let joinLink: string | undefined;
-    if (normEmail) {
-      try {
-        const workplace = await WorkplaceModel.findById(workplaceId);
-        if (workplace) {
-          if (!workplace.joinInviteToken) {
-            workplace.joinInviteToken = generateSecureToken();
-            await workplace.save();
-          }
-          const landing = new URL(env.WORKPLACE_JOIN_URL);
-          landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(workplace.joinInviteToken)}`;
-          landing.search = '';
-          joinLink = workplace.joinShareUrl || landing.toString();
+    try {
+      const workplace = await WorkplaceModel.findById(workplaceId);
+      if (workplace) {
+        const landing = new URL(env.WORKPLACE_JOIN_URL);
+        landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(rawInviteToken)}`;
+        landing.search = '';
+        joinLink = landing.toString();
 
+        if (normEmail) {
           const actor = await UserModel.findById(actorId);
           const adminName = actor?.name || 'Workplace Admin';
           const workplaceCode = workplace._id.toString().slice(-6).toUpperCase();
@@ -137,9 +138,9 @@ export class EmployeeService {
             joinLink,
           });
         }
-      } catch (emailErr) {
-        console.error('[EmployeeService] Failed to send invitation email:', emailErr);
       }
+    } catch (emailErr) {
+      console.error('[EmployeeService] Failed to send invitation email:', emailErr);
     }
 
     return {
@@ -231,11 +232,58 @@ export class EmployeeService {
     let member: IWorkplaceMember | null = null;
 
     if (options.invitationToken) {
-      const tokenHash = hashToken(options.invitationToken.trim());
+      let cleanToken = options.invitationToken.trim().replace(/^["']|["']$/g, '');
+      try {
+        const u = new URL(cleanToken.replace(/^bizora:\/\//, 'http://dummy/'));
+        const m = u.pathname.match(/\/join\/([^/?#]+)/) || u.pathname.match(/\/([^/?#]+)$/);
+        if (m && m[1] !== 'dummy') cleanToken = decodeURIComponent(m[1]);
+      } catch {
+        const match = cleanToken.match(/\/join\/([^/?#]+)/);
+        if (match) cleanToken = decodeURIComponent(match[1]);
+      }
+      const tokenHash = hashToken(cleanToken.toLowerCase());
       member = await WorkplaceMemberModel.findOne({
-        invitationTokenHash: tokenHash,
+        $or: [
+          { invitationCode: cleanToken.toLowerCase() },
+          { invitationTokenHash: tokenHash },
+          { invitationTokenHash: hashToken(cleanToken) },
+        ],
         invitationExpiresAt: { $gt: new Date() },
       });
+
+      if (!member) {
+        const parts = cleanToken.split('-');
+        if (parts.length === 2) {
+          const [wpPart, empPart] = parts;
+          member = await WorkplaceMemberModel.findOne({
+            $and: [
+              {
+                $expr: {
+                  $and: [
+                    { $regexMatch: { input: { $toString: '$_id' }, regex: `${empPart}$`, options: 'i' } },
+                    { $regexMatch: { input: { $toString: '$workplaceId' }, regex: `${wpPart}$`, options: 'i' } },
+                  ],
+                },
+              },
+              {
+                $or: [
+                  { invitationExpiresAt: { $gt: new Date() } },
+                  { invitationExpiresAt: { $exists: false } },
+                ],
+              },
+            ],
+          });
+        } else if (parts.length >= 3 && Types.ObjectId.isValid(parts[0]) && Types.ObjectId.isValid(parts[1])) {
+          member = await WorkplaceMemberModel.findOne({
+            _id: new Types.ObjectId(parts[1]),
+            workplaceId: new Types.ObjectId(parts[0]),
+            $or: [
+              { invitationExpiresAt: { $gt: new Date() } },
+              { invitationExpiresAt: { $exists: false } },
+            ],
+          });
+        }
+      }
 
       if (!member) {
         throw new AppError('Invalid or expired invitation link', 400, 'INVALID_INVITE_TOKEN');
@@ -270,6 +318,7 @@ export class EmployeeService {
     member.userId = user._id;
     member.status = 'ACTIVE';
     member.joinedAt = new Date();
+    member.invitationCode = undefined;
     member.invitationTokenHash = undefined;
     await member.save();
 

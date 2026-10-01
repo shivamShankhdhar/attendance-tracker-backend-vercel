@@ -26,7 +26,7 @@ workplaceRouter.post('/join-landing', validateRequest({ body: joinPreviewSchema 
 
 workplaceRouter.get('/join/:token', async (req, res, next) => {
   try {
-    const data = await new WorkplaceService().publicJoinPreview(String(req.params.token));
+    const data = await new WorkplaceService().publicJoinPreview(String(req.params.token), true);
     res.setHeader('Cache-Control', 'no-store');
     res.json({ success: true, data });
   } catch (error) { next(error); }
@@ -131,3 +131,24 @@ workplaceRouter.post(
 
 // Explicit creation endpoint for invite-link clients; the QR endpoint remains compatible.
 workplaceRouter.post('/:workplaceId/invite-link', requireWorkplaceMember(), requireWorkplaceRole(['EMPLOYER']), workplaceController.getJoinQr);
+
+// Wi-Fi Radar Listening Mode (EMPLOYER starts/stops, all members can check status)
+workplaceRouter.post(
+  '/:workplaceId/wifi-radar/start',
+  requireWorkplaceMember(),
+  requireWorkplaceRole(['EMPLOYER']),
+  workplaceController.startWifiRadar
+);
+
+workplaceRouter.post(
+  '/:workplaceId/wifi-radar/stop',
+  requireWorkplaceMember(),
+  requireWorkplaceRole(['EMPLOYER']),
+  workplaceController.stopWifiRadar
+);
+
+workplaceRouter.get(
+  '/:workplaceId/wifi-radar/status',
+  requireWorkplaceMember(),
+  workplaceController.getWifiRadarStatus
+);

@@ -37,16 +37,26 @@ app.get('/auth/callback', (req: Request, res: Response) => {
   res.redirect(307, '/api/v1/auth/google/callback');
 });
 
+// Direct aliases for workplace invitation preview
+app.get(['/workplaces/join/:token', '/workplace/join/:token', '/join/:token'], (req: Request, res: Response) => {
+  res.redirect(307, `/api/v1/workplaces/join/${encodeURIComponent(req.params.token)}`);
+});
+
 // Mount modular API v1 routes
 const apiV1 = express.Router();
 
 apiV1.use('/auth', authRouter);
 apiV1.use('/workplaces', workplaceRouter);
+apiV1.use('/workplace', workplaceRouter);
 apiV1.use('/workplaces', employeeRouter);
+apiV1.use('/workplace', employeeRouter);
 apiV1.use('/workplaces', attendanceSessionRouter);
+apiV1.use('/workplace', attendanceSessionRouter);
 apiV1.use('/', attendanceRequestRouter);
 apiV1.use('/workplaces', attendanceRequestRouter);
+apiV1.use('/workplace', attendanceRequestRouter);
 apiV1.use('/workplaces', attendanceRouter);
+apiV1.use('/workplace', attendanceRouter);
 apiV1.use('/', notificationRouter);
 
 app.use('/api/v1', apiV1);

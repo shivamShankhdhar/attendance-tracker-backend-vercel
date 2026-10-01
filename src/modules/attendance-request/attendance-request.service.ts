@@ -6,37 +6,73 @@ import { WorkplaceModel } from '../workplace/workplace.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { AuditLogModel } from '../audit/audit.model';
 import { NotificationOutboxModel } from '../notification/notification.model';
-import { hashToken, generateSecureToken } from '../../utils/crypto';
+import { hashToken, generateSecureToken, encryptToken } from '../../utils/crypto';
 import { getWorkplaceLocalDate } from '../../utils/date';
 import { AppError } from '../../middleware/errorHandler';
 
 export class AttendanceRequestService {
   /**
-   * Employee scans QR and submits attendance request
+   * Employee submits attendance request from QR scan or direct check-in request
    */
-  async submitRequest(userId: string, data: { qrToken: string; deviceSsid?: string }) {
-    const tokenHash = hashToken(data.qrToken.trim());
+  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'WIFI' | 'DIRECT' | 'MANUAL'; wifiMode?: boolean; note?: string }) {
+    let session: any = null;
+    let workplace: any = null;
+    let todayDate: string = '';
 
-    // 1. Locate and validate AttendanceSession
-    const session = await AttendanceSessionModel.findOne({
-      qrTokenHash: tokenHash,
-    });
+    if (data.qrToken) {
+      const tokenHash = hashToken(data.qrToken.trim());
 
-    if (!session) {
-      throw new AppError('Invalid or unrecognized QR code. Please scan today’s workplace QR.', 400, 'INVALID_QR_TOKEN');
+      // 1. Locate and validate AttendanceSession
+      session = await AttendanceSessionModel.findOne({
+        qrTokenHash: tokenHash,
+      });
+
+      if (!session) {
+        throw new AppError('Invalid or unrecognized QR code. Please scan today’s workplace QR.', 400, 'INVALID_QR_TOKEN');
+      }
+
+      if (session.status !== 'OPEN' || session.expiresAt <= new Date()) {
+        throw new AppError('Today’s attendance session is closed or expired.', 400, 'SESSION_CLOSED_OR_EXPIRED');
+      }
+
+      // 2. Validate Workplace
+      workplace = await WorkplaceModel.findById(session.workplaceId);
+      if (!workplace || workplace.status !== 'ACTIVE') {
+        throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_INACTIVE');
+      }
+
+      todayDate = session.attendanceDate;
+    } else if (data.workplaceId) {
+      workplace = await WorkplaceModel.findById(data.workplaceId);
+      if (!workplace || workplace.status !== 'ACTIVE') {
+        throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_INACTIVE');
+      }
+
+      todayDate = getWorkplaceLocalDate(new Date(), workplace.timezone || 'Asia/Kolkata');
+
+      session = await AttendanceSessionModel.findOne({
+        workplaceId: workplace._id,
+        attendanceDate: todayDate,
+      });
+
+      if (!session) {
+        const rawQr = generateSecureToken(32);
+        session = await AttendanceSessionModel.create({
+          workplaceId: workplace._id,
+          createdBy: workplace.ownerId,
+          attendanceDate: todayDate,
+          qrTokenHash: hashToken(rawQr),
+          encryptedQrToken: encryptToken(rawQr),
+          status: 'OPEN',
+          openedAt: new Date(),
+          expiresAt: new Date(Date.now() + 18 * 60 * 60 * 1000),
+        });
+      }
+    } else {
+      throw new AppError('Either QR token or workplace ID is required.', 400, 'BAD_REQUEST');
     }
 
-    if (session.status !== 'OPEN' || session.expiresAt <= new Date()) {
-      throw new AppError('Today’s attendance session is closed or expired.', 400, 'SESSION_CLOSED_OR_EXPIRED');
-    }
-
-    // 2. Validate Workplace
-    const workplace = await WorkplaceModel.findById(session.workplaceId);
-    if (!workplace || workplace.status !== 'ACTIVE') {
-      throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_INACTIVE');
-    }
-
-    // 3. Rule 7: Validate Employee belongs to this workplace
+    // Validate Employee belongs to this workplace
     const member = await WorkplaceMemberModel.findOne({
       workplaceId: workplace._id,
       userId: new Types.ObjectId(userId),
@@ -47,8 +83,6 @@ export class AttendanceRequestService {
     if (!member) {
       throw new AppError('You are not an active employee of this workplace.', 403, 'NOT_WORKPLACE_EMPLOYEE');
     }
-
-    const todayDate = session.attendanceDate;
 
     // 4. Rule 2: Check if Attendance record already exists for today
     const existingAttendance = await AttendanceModel.findOne({
@@ -99,11 +133,23 @@ export class AttendanceRequestService {
 
     // 6. Section 11: Wi-Fi verification signal
     let wifiVerified: boolean | null = null;
+    const isRadarActive = Boolean(
+      workplace.wifiRadarSession?.isActive &&
+      (!workplace.wifiRadarSession?.expiresAt || new Date(workplace.wifiRadarSession.expiresAt) > new Date())
+    );
+
     if (workplace.wifiSsid && data.deviceSsid) {
       wifiVerified = workplace.wifiSsid.trim().toLowerCase() === data.deviceSsid.trim().toLowerCase();
+    } else if (data.wifiMode || data.source === 'WIFI') {
+      if (isRadarActive) {
+        wifiVerified = true;
+      } else if (workplace.wifiSsid) {
+        wifiVerified = false;
+      }
     }
 
     const requestedAt = new Date();
+    const qrVerified = Boolean(data.qrToken);
 
     request = await AttendanceRequestModel.create({
       workplaceId: workplace._id,
@@ -113,7 +159,7 @@ export class AttendanceRequestService {
       attendanceDate: todayDate,
       requestedAt,
       verification: {
-        qrVerified: true,
+        qrVerified,
         wifiVerified,
         deviceSsid: data.deviceSsid,
       },

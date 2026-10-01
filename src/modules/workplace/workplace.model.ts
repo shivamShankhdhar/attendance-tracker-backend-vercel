@@ -18,6 +18,13 @@ export interface IWorkplace extends Document {
   status: 'ACTIVE' | 'INACTIVE';
   joinQrSecret?: string;
   joinQrEnabled?: boolean;
+  wifiRadarSession?: {
+    isActive: boolean;
+    wifiSsid?: string;
+    startedBy?: Types.ObjectId;
+    startedAt?: Date;
+    expiresAt?: Date;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,6 +46,13 @@ const workplaceSchema = new Schema<IWorkplace>(
     },
     joinQrSecret: { type: String },
     joinQrEnabled: { type: Boolean, default: true },
+    wifiRadarSession: {
+      isActive: { type: Boolean, default: false },
+      wifiSsid: { type: String, trim: true },
+      startedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      startedAt: { type: Date },
+      expiresAt: { type: Date },
+    },
     status: {
       type: String,
       enum: ['ACTIVE', 'INACTIVE'],
