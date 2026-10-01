@@ -162,7 +162,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     employeeCode = addEmpRes.body.data.employee.employeeCode;
   });
 
-  test('4. Employee logs in via PIN fallback: requires admin approval, admin approves, and employee accesses workspace', async () => {
+  test('4. Employee logs in via PIN fallback: requires admin approval, admin approves, and employee accesses workplace', async () => {
     const pinLoginRes = await makeRequest('/api/v1/auth/employee-pin-login', {
       method: 'POST',
       body: {
@@ -432,7 +432,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     }
   });
 
-  test('14. Full QR join workspace flow: Employer generates Join QR -> Candidate scans & previews details -> Candidate submits join request -> Employer reviews & approves -> Candidate becomes active employee', async () => {
+  test('14. Full QR join workplace flow: Employer generates Join QR -> Candidate scans & previews details -> Candidate submits join request -> Employer reviews & approves -> Candidate becomes active employee', async () => {
     // 1. Create a candidate user account via dev mock exchange
     const candidateAuthRes = await makeRequest('/api/v1/auth/google/exchange', {
       method: 'POST',

@@ -435,7 +435,7 @@ export class AuthService {
       const wp = m.workplaceId;
       const wpId = wp?._id?.toString() || m.workplaceId?.toString() || '';
       const ownerUser = wp?.ownerId as any;
-      const adminName = ownerUser?.name || 'Workspace Admin';
+      const adminName = ownerUser?.name || 'Workplace Admin';
       const allowEmployeeViewHistory = wp?.attendanceSettings?.allowEmployeeViewHistory !== false;
       return {
         id: m._id.toString(),

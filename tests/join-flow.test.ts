@@ -87,3 +87,52 @@ test('cancelling cannot overwrite an approved membership decision', async () => 
   await assert.rejects(service.cancelMyJoinRequest(applicant.id, requestId), (e: AppError) => e.statusCode === 409);
   assert.equal((await service.getMyJoinRequest(applicant.id, requestId)).latestRequest.status, 'APPROVED');
 });
+
+test('manually added employee receives join link, sees preview as invited, and joins directly with no approval needed', async () => {
+  const { owner, workplace, link } = await fixture();
+  const { employeeService } = await import('../src/modules/employee/employee.service');
+
+  const empEmail = `invited-${Date.now()}@join.test`;
+  const addResult = await employeeService.addEmployee(workplace.id, owner.id, {
+    name: 'Rahul Employee',
+    email: empEmail,
+  });
+
+  assert.ok(addResult.joinLink, 'addEmployee must generate and return a joinLink');
+  assert.ok(addResult.inviteToken, 'addEmployee must generate an inviteToken');
+  assert.equal(addResult.employee.invitedEmail, empEmail);
+  assert.equal(addResult.employee.status, 'INVITED');
+
+  // Candidate user signs up / signs in with Google using that email
+  const candidateUser = await UserModel.create({
+    name: 'Rahul Employee',
+    email: empEmail,
+    status: 'ACTIVE',
+  });
+
+  // Preview the workplace using the generated workplace join link
+  const preview = await service.previewJoin(candidateUser.id, addResult.joinLink);
+  assert.equal(preview.workplaceId, workplace.id);
+  assert.equal(preview.isInvited, true, 'previewJoin must recognize user is an invited employee');
+  assert.equal(preview.alreadyMember, false);
+
+  // Preview using the personal invite token
+  const tokenPreview = await service.previewJoin(candidateUser.id, addResult.inviteToken);
+  assert.equal(tokenPreview.workplaceId, workplace.id);
+  assert.equal(tokenPreview.isInvited, true);
+
+  // Candidate clicks to join: should be auto-approved immediately without requiring employer approval!
+  const joinResult = await service.submitJoinRequest(candidateUser.id, { token: addResult.joinLink });
+  assert.equal(joinResult.status, 'APPROVED');
+  assert.equal(joinResult.alreadyMember, true);
+  assert.equal(joinResult.autoApproved, true);
+
+  // Verify membership in DB is ACTIVE
+  const activeMember = await WorkplaceMemberModel.findOne({
+    workplaceId: workplace.id,
+    userId: candidateUser.id,
+    status: 'ACTIVE',
+  });
+  assert.ok(activeMember, 'Candidate should now be an active member of the workplace');
+  assert.equal(activeMember.role, 'EMPLOYEE');
+});

@@ -6,9 +6,9 @@ export async function createDeferredInviteLink(token: string, name: string, cano
     method: 'POST', signal: AbortSignal.timeout(8000), headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       branch_key: process.env.BRANCH_KEY,
-      alias: `join/${token}`, feature: 'workspace-invitation',
+      alias: `join/${token}`, feature: 'workplace-invitation',
       data: {
-        workspace_token: token, $deeplink_path: `join/${token}`, $canonical_url: canonicalUrl,
+        workplace_token: token, workspace_token: token, $deeplink_path: `join/${token}`, $canonical_url: canonicalUrl,
         $desktop_url: canonicalUrl, $fallback_url: canonicalUrl,
         $og_title: `Join ${name}`, $og_description: 'Sign in to view the workplace and request to join.',
         ...(process.env.PLAY_STORE_URL ? { $android_url: process.env.PLAY_STORE_URL } : {}),

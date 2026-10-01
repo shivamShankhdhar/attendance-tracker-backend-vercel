@@ -8,7 +8,7 @@ import { WorkplaceJoinRequestModel } from './workplace-join-request.model';
 import { UserModel } from '../auth/user.model';
 import { AuditLogModel } from '../audit/audit.model';
 import { AppError } from '../../middleware/errorHandler';
-import { decryptToken, generateSecureToken } from '../../utils/crypto';
+import { decryptToken, generateSecureToken, hashToken } from '../../utils/crypto';
 
 export class WorkplaceService {
   /**
@@ -229,6 +229,21 @@ export class WorkplaceService {
       return { workplaceId: invited._id.toString(), secret: invited.joinQrSecret };
     }
 
+    // Check if token matches an employee-specific invitation token
+    const memberInvite = await WorkplaceMemberModel.findOne({
+      $or: [
+        { invitationTokenHash: hashToken(tokenStr) },
+        { invitationTokenHash: tokenStr },
+      ],
+      invitationExpiresAt: { $gt: new Date() },
+    });
+    if (memberInvite) {
+      const wp = await WorkplaceModel.findById(memberInvite.workplaceId);
+      if (wp) {
+        return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
+      }
+    }
+
     // 1. Try decrypting as standard encrypted QR/join token
     try {
       const decrypted = decryptToken(tokenStr);
@@ -377,6 +392,17 @@ export class WorkplaceService {
       status: 'ACTIVE',
     });
 
+    // Check if user has an INVITED membership (directly added by employer)
+    const userDoc = await UserModel.findById(userId);
+    const invitedMember = await WorkplaceMemberModel.findOne({
+      workplaceId: workplace._id,
+      $or: [
+        ...(userDoc?.email ? [{ invitedEmail: userDoc.email.toLowerCase() }] : []),
+        { userId: new Types.ObjectId(userId) },
+      ],
+      status: 'INVITED',
+    });
+
     // Check if user has an existing PENDING request
     const pendingRequest = await WorkplaceJoinRequestModel.findOne({
       workplaceId: workplace._id,
@@ -398,10 +424,12 @@ export class WorkplaceService {
       address: workplace.address,
       description: workplace.description,
       timezone: workplace.timezone,
-      ownerName: owner?.name || 'Workspace Admin',
+      ownerName: owner?.name || 'Workplace Admin',
       ownerAvatarUrl: owner?.avatarUrl,
       activeMembersCount,
       alreadyMember: Boolean(existingMember),
+      isInvited: Boolean(invitedMember),
+      invitedRole: invitedMember?.role || 'EMPLOYEE',
       latestRequest: pendingRequest ? { id: pendingRequest._id.toString(), status: pendingRequest.status, requestedAt: pendingRequest.createdAt, reviewedAt: pendingRequest.reviewedAt, rejectionReason: pendingRequest.rejectionReason } : null,
       pendingRequest: pendingRequest?.status === 'PENDING'
         ? {
@@ -433,6 +461,47 @@ export class WorkplaceService {
     });
     if (existingMember) {
       throw new AppError('You are already an active member of this workplace', 409, 'ALREADY_MEMBER');
+    }
+
+    // If user is already an INVITED member added manually by the employer, directly join!
+    // No employer approval is needed!
+    const invitedMember = await WorkplaceMemberModel.findOne({
+      workplaceId: workplace._id,
+      $or: [
+        ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : []),
+        { userId: user._id },
+      ],
+      status: 'INVITED',
+    });
+
+    if (invitedMember) {
+      invitedMember.userId = user._id;
+      invitedMember.status = 'ACTIVE';
+      invitedMember.joinedAt = new Date();
+      invitedMember.invitationTokenHash = undefined;
+      await invitedMember.save();
+
+      await WorkplaceJoinRequestModel.updateMany(
+        { workplaceId: workplace._id, userId: user._id, status: 'PENDING' },
+        { $set: { status: 'APPROVED', reviewedAt: new Date() } }
+      );
+
+      await AuditLogModel.create({
+        workplaceId: workplace._id,
+        actorId: user._id,
+        action: 'INVITATION_CLAIMED',
+        entityId: invitedMember._id.toString(),
+      });
+
+      return {
+        message: 'Joined workplace successfully! No approval needed.',
+        requestId: 'direct-invited',
+        status: 'APPROVED',
+        workplaceName: workplace.name,
+        alreadyMember: true,
+        autoApproved: true,
+        workplaceId: workplace._id.toString(),
+      };
     }
 
     // Check if already has a PENDING request
@@ -521,7 +590,7 @@ export class WorkplaceService {
     ]);
     return {
       workplaceId: workplace._id.toString(), workplaceName: workplace.name, description: workplace.description,
-      address: workplace.address, timezone: workplace.timezone, ownerName: owner?.name || 'Workspace Admin',
+      address: workplace.address, timezone: workplace.timezone, ownerName: owner?.name || 'Workplace Admin',
       activeMembersCount, alreadyMember: Boolean(member) && workplace.status === 'ACTIVE',
       latestRequest: { id: request._id.toString(), status: request.status, requestedAt: request.createdAt,
         reviewedAt: request.reviewedAt, rejectionReason: request.rejectionReason },

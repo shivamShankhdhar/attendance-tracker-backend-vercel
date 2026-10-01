@@ -1,9 +1,12 @@
 import { Types } from 'mongoose';
 import { WorkplaceMemberModel, IWorkplaceMember } from './workplace-member.model';
+import { WorkplaceModel } from '../workplace/workplace.model';
 import { UserModel } from '../auth/user.model';
 import { AuditLogModel } from '../audit/audit.model';
 import { hashPin, generateSecureToken, hashToken } from '../../utils/crypto';
 import { AppError } from '../../middleware/errorHandler';
+import { emailService } from '../../services/email.service';
+import { env } from '../../config/env';
 
 export class EmployeeService {
   /**
@@ -105,6 +108,40 @@ export class EmployeeService {
       metadata: { employeeCode: code, email: normEmail },
     });
 
+    // Generate workplace join link and dispatch invitation email if email is provided
+    let joinLink: string | undefined;
+    if (normEmail) {
+      try {
+        const workplace = await WorkplaceModel.findById(workplaceId);
+        if (workplace) {
+          if (!workplace.joinInviteToken) {
+            workplace.joinInviteToken = generateSecureToken();
+            await workplace.save();
+          }
+          const landing = new URL(env.WORKPLACE_JOIN_URL);
+          landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(workplace.joinInviteToken)}`;
+          landing.search = '';
+          joinLink = workplace.joinShareUrl || landing.toString();
+
+          const actor = await UserModel.findById(actorId);
+          const adminName = actor?.name || 'Workplace Admin';
+          const workplaceCode = workplace._id.toString().slice(-6).toUpperCase();
+
+          await emailService.sendWorkplaceInvitationEmail({
+            toEmail: normEmail,
+            employeeName: member.name,
+            workplaceName: workplace.name,
+            workplaceCode,
+            adminName,
+            address: workplace.address,
+            joinLink,
+          });
+        }
+      } catch (emailErr) {
+        console.error('[EmployeeService] Failed to send invitation email:', emailErr);
+      }
+    }
+
     return {
       employee: {
         id: member._id.toString(),
@@ -115,6 +152,7 @@ export class EmployeeService {
         hasPin: Boolean(member.pinHash),
       },
       inviteToken: rawInviteToken,
+      joinLink,
     };
   }
 
