@@ -39,7 +39,8 @@ app.get('/auth/callback', (req: Request, res: Response) => {
 
 // Direct aliases for workplace invitation preview
 app.get(['/workplaces/join/:token', '/workplace/join/:token', '/join/:token'], (req: Request, res: Response) => {
-  res.redirect(307, `/api/v1/workplaces/join/${encodeURIComponent(req.params.token)}`);
+  const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+  res.redirect(307, `/api/v1/workplaces/join/${encodeURIComponent(token || '')}`);
 });
 
 // Mount modular API v1 routes

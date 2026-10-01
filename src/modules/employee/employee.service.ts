@@ -76,10 +76,19 @@ export class EmployeeService {
     }
 
     const memberId = new Types.ObjectId();
-    // Compact 10-character invite code: 4 hex digits from workplaceId + '-' + 5 hex digits from new employee memberId
-    const wpPart = workplaceId.slice(-4).toLowerCase();
-    const empPart = memberId.toString().slice(-5).toLowerCase();
-    const rawInviteToken = `${wpPart}-${empPart}`;
+    // Short 6 to 8 character invitation code with '-' in between:
+    // e.g. 3 hex digits from workplaceId + '-' + 3 hex digits from new employee memberId (xxx-xxx: 6 code chars)
+    const wpPart = workplaceId.slice(-3).toLowerCase();
+    let empPart = memberId.toString().slice(-3).toLowerCase();
+    let rawInviteToken = `${wpPart}-${empPart}`;
+
+    // Ensure uniqueness for invitationCode across pending invited members; fallback to 4 chars (8 total) if conflict
+    const codeConflict = await WorkplaceMemberModel.findOne({ invitationCode: rawInviteToken, status: 'INVITED' });
+    if (codeConflict) {
+      empPart = memberId.toString().slice(-4).toLowerCase();
+      rawInviteToken = `${wpPart}-${empPart}`;
+    }
+
     const invitationTokenHash = hashToken(rawInviteToken);
     const invitationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
