@@ -14,10 +14,11 @@ export class AttendanceRequestService {
   /**
    * Employee submits attendance request from QR scan or direct check-in request
    */
-  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'WIFI' | 'DIRECT' | 'MANUAL'; wifiMode?: boolean; note?: string }) {
+  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'WIFI' | 'DIRECT' | 'MANUAL'; wifiMode?: boolean; note?: string; requestType?: 'CHECK_IN' | 'CHECK_OUT' }) {
     let session: any = null;
     let workplace: any = null;
     let todayDate: string = '';
+    const requestType = data.requestType || 'CHECK_IN';
 
     if (data.qrToken) {
       const tokenHash = hashToken(data.qrToken.trim());
@@ -84,51 +85,101 @@ export class AttendanceRequestService {
       throw new AppError('You are not an active employee of this workplace.', 403, 'NOT_WORKPLACE_EMPLOYEE');
     }
 
-    // 4. Rule 2: Check if Attendance record already exists for today
+    // 4. Check existing attendance record for today
     const existingAttendance = await AttendanceModel.findOne({
       workplaceId: workplace._id,
       employeeMemberId: member._id,
       attendanceDate: todayDate,
     });
 
-    if (existingAttendance) {
-      return {
-        isAlreadyPresent: true,
-        attendance: {
-          id: existingAttendance._id.toString(),
-          status: existingAttendance.status,
-          checkInTime: existingAttendance.checkInTime,
-          approvedAt: existingAttendance.approvedAt,
-        },
-        message: 'You are already marked present for today!',
-      };
-    }
+    if (requestType === 'CHECK_OUT') {
+      if (!existingAttendance) {
+        throw new AppError('Cannot check out: you have not checked in for today yet.', 400, 'NO_CHECK_IN_FOUND');
+      }
+      if (existingAttendance.checkOutTime) {
+        return {
+          isAlreadyCheckedOut: true,
+          attendance: {
+            id: existingAttendance._id.toString(),
+            status: existingAttendance.status,
+            checkInTime: existingAttendance.checkInTime,
+            checkOutTime: existingAttendance.checkOutTime,
+            approvedAt: existingAttendance.approvedAt,
+          },
+          message: 'You have already checked out for today!',
+        };
+      }
 
-    // 5. Check if AttendanceRequest already exists for today
-    let request = await AttendanceRequestModel.findOne({
-      workplaceId: workplace._id,
-      employeeMemberId: member._id,
-      attendanceDate: todayDate,
-    });
+      // Check if a CHECK_OUT request already exists
+      const existingReq = await AttendanceRequestModel.findOne({
+        workplaceId: workplace._id,
+        employeeMemberId: member._id,
+        attendanceDate: todayDate,
+        requestType: 'CHECK_OUT',
+      });
 
-    if (request) {
-      return {
-        request: {
-          id: request._id.toString(),
-          workplaceId: request.workplaceId.toString(),
-          workplaceName: workplace.name,
-          status: request.status,
-          requestedAt: request.requestedAt,
-          verification: request.verification,
-          rejectionReason: request.rejectionReason,
-        },
-        message:
-          request.status === 'APPROVED'
-            ? 'Attendance already approved!'
-            : request.status === 'PENDING'
-            ? 'Your attendance request is already pending approval from your employer.'
-            : 'Your request was previously reviewed.',
-      };
+      if (existingReq) {
+        return {
+          request: {
+            id: existingReq._id.toString(),
+            workplaceId: existingReq.workplaceId.toString(),
+            workplaceName: workplace.name,
+            status: existingReq.status,
+            requestedAt: existingReq.requestedAt,
+            verification: existingReq.verification,
+            rejectionReason: existingReq.rejectionReason,
+            requestType: existingReq.requestType,
+          },
+          message:
+            existingReq.status === 'APPROVED'
+              ? 'Check-out already approved!'
+              : 'Your check-out request is pending approval from your employer.',
+        };
+      }
+    } else {
+      // CHECK_IN request
+      if (existingAttendance) {
+        return {
+          isAlreadyPresent: true,
+          attendance: {
+            id: existingAttendance._id.toString(),
+            status: existingAttendance.status,
+            checkInTime: existingAttendance.checkInTime,
+            checkOutTime: existingAttendance.checkOutTime,
+            approvedAt: existingAttendance.approvedAt,
+          },
+          message: 'You are already marked present for today!',
+        };
+      }
+
+      // 5. Check if AttendanceRequest already exists for today
+      const existingReq = await AttendanceRequestModel.findOne({
+        workplaceId: workplace._id,
+        employeeMemberId: member._id,
+        attendanceDate: todayDate,
+        requestType: 'CHECK_IN',
+      });
+
+      if (existingReq) {
+        return {
+          request: {
+            id: existingReq._id.toString(),
+            workplaceId: existingReq.workplaceId.toString(),
+            workplaceName: workplace.name,
+            status: existingReq.status,
+            requestedAt: existingReq.requestedAt,
+            verification: existingReq.verification,
+            rejectionReason: existingReq.rejectionReason,
+            requestType: existingReq.requestType,
+          },
+          message:
+            existingReq.status === 'APPROVED'
+              ? 'Attendance already approved!'
+              : existingReq.status === 'PENDING'
+              ? 'Your attendance request is already pending approval from your employer.'
+              : 'Your request was previously reviewed.',
+        };
+      }
     }
 
     // 6. Section 11: Wi-Fi verification signal
@@ -151,13 +202,14 @@ export class AttendanceRequestService {
     const requestedAt = new Date();
     const qrVerified = Boolean(data.qrToken);
 
-    request = await AttendanceRequestModel.create({
+    const request = await AttendanceRequestModel.create({
       workplaceId: workplace._id,
       attendanceSessionId: session._id,
       employeeMemberId: member._id,
       userId: new Types.ObjectId(userId),
       attendanceDate: todayDate,
       requestedAt,
+      requestType,
       verification: {
         qrVerified,
         wifiVerified,
@@ -166,16 +218,26 @@ export class AttendanceRequestService {
       status: 'PENDING',
     });
 
+    // Update member's Wi-Fi presence timestamp so they appear immediately in floating radar
+    if (data.source === 'WIFI' || data.wifiMode || data.deviceSsid || isRadarActive) {
+      member.lastWifiSeenAt = requestedAt;
+      if (data.deviceSsid || workplace.wifiSsid) {
+        member.lastConnectedSsid = data.deviceSsid || workplace.wifiSsid;
+      }
+      await member.save();
+    }
+
     // 7. Persist notification job for employer
     await NotificationOutboxModel.create({
       eventId: `req_${request._id.toString()}_${Date.now()}`,
       recipientId: workplace.ownerId,
       workplaceId: workplace._id,
-      kind: 'ATTENDANCE_REQUESTED',
-      title: 'New Attendance Request',
-      body: `${member.name} requested attendance for ${todayDate}`,
+      kind: requestType === 'CHECK_OUT' ? 'CHECK_OUT_REQUESTED' : 'ATTENDANCE_REQUESTED',
+      title: requestType === 'CHECK_OUT' ? 'New Check-Out Request' : 'New Attendance Request',
+      body: `${member.name} requested ${requestType === 'CHECK_OUT' ? 'check-out' : 'attendance'} for ${todayDate}`,
       data: {
         requestId: request._id.toString(),
+        requestType,
         employeeName: member.name,
         employeeCode: member.employeeCode,
         requestedAt: requestedAt.toISOString(),
@@ -193,8 +255,12 @@ export class AttendanceRequestService {
         status: request.status,
         requestedAt: request.requestedAt,
         verification: request.verification,
+        requestType: request.requestType,
       },
-      message: 'Attendance requested! Waiting for your employer to approve.',
+      message:
+        requestType === 'CHECK_OUT'
+          ? 'Check-out requested! Waiting for your employer to approve.'
+          : 'Attendance requested! Waiting for your employer to approve.',
     };
   }
 
@@ -230,6 +296,7 @@ export class AttendanceRequestService {
       attendanceDate: req.attendanceDate,
       requestedAt: req.requestedAt,
       status: req.status,
+      requestType: req.requestType || 'CHECK_IN',
       employee: {
         memberId: req.employeeMemberId?._id?.toString(),
         name: req.employeeMemberId?.name || 'Employee',
@@ -263,7 +330,7 @@ export class AttendanceRequestService {
       workplaceId: workplace._id,
       employeeMemberId: member._id,
       attendanceDate: todayDate,
-    });
+    }).sort({ requestedAt: -1 });
 
     if (!request) return null;
 
@@ -272,6 +339,7 @@ export class AttendanceRequestService {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
       status: request.status,
+      requestType: request.requestType || 'CHECK_IN',
       requestedAt: request.requestedAt,
       reviewedAt: request.reviewedAt,
       verification: request.verification,
@@ -309,6 +377,59 @@ export class AttendanceRequestService {
     }
 
     const now = new Date();
+
+    if (request.requestType === 'CHECK_OUT') {
+      const attendance = await AttendanceModel.findOneAndUpdate(
+        {
+          workplaceId: request.workplaceId,
+          employeeMemberId: request.employeeMemberId._id,
+          attendanceDate: request.attendanceDate,
+        },
+        {
+          $set: {
+            checkOutTime: request.requestedAt || now,
+          },
+        },
+        { new: true }
+      );
+
+      request.status = 'APPROVED';
+      request.reviewedBy = new Types.ObjectId(employerUserId);
+      request.reviewedAt = now;
+      await request.save();
+
+      await AuditLogModel.create({
+        workplaceId: request.workplaceId,
+        actorId: new Types.ObjectId(employerUserId),
+        action: 'ATTENDANCE_CHECKOUT_APPROVED',
+        entityId: attendance ? attendance._id.toString() : request._id.toString(),
+        metadata: {
+          requestId: request._id.toString(),
+          attendanceDate: request.attendanceDate,
+        },
+      });
+
+      await NotificationOutboxModel.create({
+        eventId: `appr_out_${request._id.toString()}_${Date.now()}`,
+        recipientId: request.userId,
+        workplaceId: request.workplaceId,
+        kind: 'CHECK_OUT_APPROVED',
+        title: 'Check-Out Approved!',
+        body: `Your check-out for ${request.attendanceDate} has been approved.`,
+        data: {
+          attendanceId: attendance?._id?.toString(),
+          attendanceDate: request.attendanceDate,
+        },
+        status: 'PENDING',
+        attempts: 0,
+        nextAttemptAt: new Date(),
+      });
+
+      return {
+        message: 'Check-out approved successfully',
+        attendance,
+      };
+    }
 
     // 1. Create or upsert Attendance record
     // Section 13: checkInTime = requestedAt, approvedAt = now

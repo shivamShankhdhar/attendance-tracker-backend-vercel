@@ -210,6 +210,17 @@ export class WorkplaceController {
       next(error);
     }
   }
+
+  async pingWifiRadar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const workplaceId = getParam(req, 'workplaceId');
+      const data = await workplaceService.pingWifiRadar(workplaceId, req.user.userId, req.body);
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const workplaceController = new WorkplaceController();

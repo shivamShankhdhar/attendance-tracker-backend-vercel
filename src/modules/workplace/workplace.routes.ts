@@ -152,3 +152,9 @@ workplaceRouter.get(
   requireWorkplaceMember(),
   workplaceController.getWifiRadarStatus
 );
+
+workplaceRouter.post(
+  '/:workplaceId/wifi-radar/ping',
+  requireWorkplaceMember(),
+  workplaceController.pingWifiRadar
+);

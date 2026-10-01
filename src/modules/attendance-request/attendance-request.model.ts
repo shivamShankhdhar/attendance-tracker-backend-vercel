@@ -1,6 +1,7 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
 export type RequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+export type AttendanceRequestType = 'CHECK_IN' | 'CHECK_OUT';
 
 export interface IAttendanceRequest extends Document {
   _id: Types.ObjectId;
@@ -10,6 +11,7 @@ export interface IAttendanceRequest extends Document {
   userId: Types.ObjectId;
   attendanceDate: string; // 'YYYY-MM-DD'
   requestedAt: Date;
+  requestType: AttendanceRequestType;
   verification: {
     qrVerified: boolean;
     wifiVerified: boolean | null;
@@ -31,6 +33,13 @@ const attendanceRequestSchema = new Schema<IAttendanceRequest>(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     attendanceDate: { type: String, required: true, index: true },
     requestedAt: { type: Date, required: true },
+    requestType: {
+      type: String,
+      enum: ['CHECK_IN', 'CHECK_OUT'],
+      default: 'CHECK_IN',
+      required: true,
+      index: true,
+    },
     verification: {
       qrVerified: { type: Boolean, default: true, required: true },
       wifiVerified: { type: Boolean, default: null },
@@ -52,9 +61,9 @@ const attendanceRequestSchema = new Schema<IAttendanceRequest>(
   }
 );
 
-// Unique compound index: one request per employee per workplace per date
+// Compound index: one request per type per employee per workplace per date
 attendanceRequestSchema.index(
-  { workplaceId: 1, employeeMemberId: 1, attendanceDate: 1 },
+  { workplaceId: 1, employeeMemberId: 1, attendanceDate: 1, requestType: 1 },
   { unique: true }
 );
 

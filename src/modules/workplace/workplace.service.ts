@@ -1025,7 +1025,35 @@ export class WorkplaceService {
   }
 
   /**
-   * Get current Wi-Fi radar listening status
+   * Employee Wi-Fi heartbeat ping
+   */
+  async pingWifiRadar(workplaceId: string, userId: string, data?: { deviceSsid?: string; isConnected?: boolean }) {
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+
+    const member = await WorkplaceMemberModel.findOne({
+      workplaceId: new Types.ObjectId(workplaceId),
+      userId: new Types.ObjectId(userId),
+      role: 'EMPLOYEE',
+      status: 'ACTIVE',
+    });
+    if (!member) throw new AppError('Active membership not found', 404, 'MEMBER_NOT_FOUND');
+
+    // Only disconnect if explicitly requested as false; otherwise presence ping sets lastWifiSeenAt
+    const isExplicitlyDisconnected = data?.isConnected === false;
+    member.lastWifiSeenAt = isExplicitlyDisconnected ? undefined : new Date();
+    member.lastConnectedSsid = isExplicitlyDisconnected ? undefined : (data?.deviceSsid || workplace.wifiSsid);
+    await member.save();
+
+    return {
+      success: true,
+      isConnected: !isExplicitlyDisconnected,
+      lastWifiSeenAt: member.lastWifiSeenAt,
+    };
+  }
+
+  /**
+   * Get current Wi-Fi radar listening status & connected employees
    */
   async getWifiRadarStatus(workplaceId: string) {
     const workplace = await WorkplaceModel.findById(workplaceId);
@@ -1036,9 +1064,63 @@ export class WorkplaceService {
     const isActive = Boolean(session?.isActive && !isExpired);
 
     const { AttendanceRequestModel } = await import('../attendance-request/attendance-request.model');
+    const { AttendanceModel } = await import('../attendance/attendance.model');
+    const { getWorkplaceLocalDate } = await import('../../utils/date');
+
+    const todayDate = getWorkplaceLocalDate(new Date(), workplace.timezone || 'Asia/Kolkata');
+
     const pendingCount = await AttendanceRequestModel.countDocuments({
       workplaceId: new Types.ObjectId(workplaceId),
       status: 'PENDING',
+    });
+
+    // Connected employees (pinged within last 2 minutes)
+    const twoMinutesAgo = new Date(Date.now() - 120000);
+    const connectedMembers = await WorkplaceMemberModel.find({
+      workplaceId: new Types.ObjectId(workplaceId),
+      role: 'EMPLOYEE',
+      status: 'ACTIVE',
+      lastWifiSeenAt: { $gte: twoMinutesAgo },
+    }).populate('userId', 'avatarUrl');
+
+    const todayAttendances = await AttendanceModel.find({
+      workplaceId: new Types.ObjectId(workplaceId),
+      attendanceDate: todayDate,
+      employeeMemberId: { $in: connectedMembers.map((m) => m._id) },
+    });
+
+    const pendingRequests = await AttendanceRequestModel.find({
+      workplaceId: new Types.ObjectId(workplaceId),
+      attendanceDate: todayDate,
+      status: 'PENDING',
+      employeeMemberId: { $in: connectedMembers.map((m) => m._id) },
+    });
+
+    const connectedEmployees = connectedMembers.map((m: any) => {
+      const att = todayAttendances.find((a) => a.employeeMemberId.toString() === m._id.toString());
+      const pReq = pendingRequests.find((r) => r.employeeMemberId.toString() === m._id.toString());
+
+      let attendanceStatus: 'PRESENT' | 'CHECKED_OUT' | 'PENDING' | 'NOT_MARKED' = 'NOT_MARKED';
+      if (att) {
+        if (att.checkOutTime) {
+          attendanceStatus = 'CHECKED_OUT';
+        } else if (att.status === 'PRESENT') {
+          attendanceStatus = 'PRESENT';
+        }
+      } else if (pReq) {
+        attendanceStatus = 'PENDING';
+      }
+
+      return {
+        memberId: m._id.toString(),
+        name: m.name,
+        employeeCode: m.employeeCode || 'EMP',
+        avatarUrl: m.userId?.avatarUrl || undefined,
+        isWifiConnected: true,
+        attendanceStatus,
+        checkInTime: att?.checkInTime,
+        checkOutTime: att?.checkOutTime,
+      };
     });
 
     return {
@@ -1047,6 +1129,7 @@ export class WorkplaceService {
       startedAt: session?.startedAt || null,
       expiresAt: session?.expiresAt || null,
       pendingCount,
+      connectedEmployees,
     };
   }
 }

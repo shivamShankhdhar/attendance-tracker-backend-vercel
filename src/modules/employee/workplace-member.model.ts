@@ -14,6 +14,8 @@ export interface IWorkplaceMember extends Document {
   invitationTokenHash?: string;
   invitationExpiresAt?: Date;
   joinedAt?: Date;
+  lastWifiSeenAt?: Date;
+  lastConnectedSsid?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +40,8 @@ const workplaceMemberSchema = new Schema<IWorkplaceMember>(
     invitationTokenHash: { type: String, index: { unique: true, sparse: true } },
     invitationExpiresAt: { type: Date },
     joinedAt: { type: Date },
+    lastWifiSeenAt: { type: Date },
+    lastConnectedSsid: { type: String, trim: true },
   },
   {
     timestamps: true,

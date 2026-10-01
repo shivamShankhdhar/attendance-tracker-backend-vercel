@@ -11,6 +11,7 @@ export interface IAttendance extends Document {
   attendanceDate: string; // 'YYYY-MM-DD'
   status: AttendanceStatus;
   checkInTime?: Date;
+  checkOutTime?: Date;
   approvedAt?: Date;
   approvedBy?: Types.ObjectId;
   source: AttendanceSource;
@@ -38,6 +39,7 @@ const attendanceSchema = new Schema<IAttendance>(
       index: true,
     },
     checkInTime: { type: Date },
+    checkOutTime: { type: Date },
     approvedAt: { type: Date },
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     source: {

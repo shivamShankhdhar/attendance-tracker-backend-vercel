@@ -24,7 +24,7 @@ export class AttendanceService {
         workplaceId: workplace._id, role: 'EMPLOYEE', status: { $in: ['ACTIVE', 'INVITED'] },
       }).populate('userId', 'avatarUrl').select('name employeeCode userId').sort({ name: 1 }).lean(),
       AttendanceModel.find({ workplaceId: workplace._id, attendanceDate: todayDate })
-        .select('employeeMemberId status checkInTime approvedAt source').lean(),
+        .select('employeeMemberId status checkInTime checkOutTime approvedAt source').lean(),
       AttendanceRequestModel.find({ workplaceId: workplace._id, attendanceDate: todayDate, status: 'PENDING' })
         .select('employeeMemberId requestedAt').lean(),
     ]);
@@ -42,11 +42,13 @@ export class AttendanceService {
 
       let status: 'PRESENT' | 'PENDING' | 'NOT_MARKED' | 'ABSENT' | 'HALF_DAY' | 'LEAVE' = 'NOT_MARKED';
       let checkInTime: Date | undefined;
+      let checkOutTime: Date | undefined;
       let approvedAt: Date | undefined;
 
       if (attendance) {
         status = attendance.status;
         checkInTime = attendance.checkInTime;
+        checkOutTime = attendance.checkOutTime;
         approvedAt = attendance.approvedAt;
         if (attendance.status === 'PRESENT') presentCount++;
       } else if (pendingReq) {
@@ -64,6 +66,7 @@ export class AttendanceService {
         avatarUrl: emp.userId?.avatarUrl || undefined,
         status,
         checkInTime,
+        checkOutTime,
         approvedAt,
         requestId: pendingReq?._id?.toString(),
         source: attendance?.source,
@@ -123,6 +126,7 @@ export class AttendanceService {
       attendanceDate: rec.attendanceDate,
       status: rec.status,
       checkInTime: rec.checkInTime,
+      checkOutTime: rec.checkOutTime,
       approvedAt: rec.approvedAt,
       source: rec.source,
       verification: rec.verification,
@@ -198,6 +202,7 @@ export class AttendanceService {
         attendanceDate: rec.attendanceDate,
         status: rec.status,
         checkInTime: rec.checkInTime,
+        checkOutTime: rec.checkOutTime,
         approvedAt: rec.approvedAt,
         source: rec.source,
         employee: {
