@@ -153,7 +153,8 @@ export class AuthService {
       });
     } else {
       if (expoPushToken) user.expoPushToken = expoPushToken;
-      if (name && !user.name) user.name = name;
+      if (email && (!user.email || user.email !== email)) user.email = email;
+      if (name && (name !== 'User' || !user.name)) user.name = name;
       if (avatarUrl) user.avatarUrl = avatarUrl;
       await user.save();
     }
@@ -242,15 +243,28 @@ export class AuthService {
     if (!user) {
       user = await UserModel.create({
         name: member.name,
+        email: member.invitedEmail ? member.invitedEmail.toLowerCase() : undefined,
         status: 'ACTIVE',
         tokenVersion: 1,
         expoPushToken,
       });
       member.userId = user._id;
       await member.save();
-    } else if (expoPushToken) {
-      user.expoPushToken = expoPushToken;
-      await user.save();
+    } else {
+      let updated = false;
+      if (expoPushToken && user.expoPushToken !== expoPushToken) {
+        user.expoPushToken = expoPushToken;
+        updated = true;
+      }
+      if (member.invitedEmail && (!user.email || user.email !== member.invitedEmail.toLowerCase())) {
+        user.email = member.invitedEmail.toLowerCase();
+        updated = true;
+      }
+      if (member.name && (!user.name || user.name === 'User')) {
+        user.name = member.name;
+        updated = true;
+      }
+      if (updated) await user.save();
     }
 
     const wpId = (member.workplaceId as any)?._id || member.workplaceId;
@@ -567,6 +581,21 @@ export class AuthService {
     const user = await UserModel.findById(userId);
     if (!user || user.status !== 'ACTIVE') {
       throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    // Auto-resolve email & name if missing on UserModel (e.g. employee created via PIN)
+    if (!user.email) {
+      const activeMember = await WorkplaceMemberModel.findOne({
+        userId: user._id,
+        invitedEmail: { $exists: true, $ne: '' },
+      });
+      if (activeMember?.invitedEmail) {
+        user.email = activeMember.invitedEmail.toLowerCase();
+        if (activeMember.name && (!user.name || user.name === 'User')) {
+          user.name = activeMember.name;
+        }
+        await user.save();
+      }
     }
 
     if (!user.email) {

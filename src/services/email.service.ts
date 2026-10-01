@@ -41,8 +41,16 @@ class EmailService {
     const appName = process.env.APP_NAME || 'Bizora';
     const sender = process.env.GMAIL_USER || 'security@bizora.app';
 
-    // If no SMTP configured, log in development/test mode
-    if (!this.transporter) {
+    // Guard: Never dispatch live emails to test/dummy domains or during automated tests
+    const isTestEmail =
+      process.env.NODE_ENV === 'test' ||
+      toEmail.endsWith('.local') ||
+      toEmail.endsWith('@test.com') ||
+      toEmail.endsWith('.test') ||
+      toEmail.endsWith('@example.com') ||
+      toEmail.includes('test-suite');
+
+    if (isTestEmail || !this.transporter) {
       console.log(`\n==================================================`);
       console.log(`[EMAIL SERVICE - DEV/TEST MOCK OTP]`);
       console.log(`To: ${toEmail} (${userName})`);
@@ -91,12 +99,25 @@ class EmailService {
               <h1 style="margin: 0 0 12px 0; font-size: 22px; font-weight: 800; color: #1B2210; letter-spacing: -0.4px;">
                 ${actionText}
               </h1>
-              <p style="margin: 0 0 8px 0; font-size: 15px; color: #1B2210; line-height: 1.5;">
-                Hello <strong>${userName || 'there'}</strong>,
+              <p style="margin: 0 0 10px 0; font-size: 15px; color: #1B2210; line-height: 1.5;">
+                Hello <strong>${userName || 'User'}</strong>,
               </p>
-              <p style="margin: 0 0 24px 0; font-size: 14px; color: #6A755A; line-height: 1.5;">
-                ${actionDesc} Use the verification code below to confirm your identity and proceed.
+              <p style="margin: 0 0 18px 0; font-size: 14px; color: #556045; line-height: 1.5;">
+                ${actionDesc} Use the 6-digit verification code below to confirm your identity and complete the reset.
               </p>
+
+              <!-- Requester Account Details Card -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F8FAF2; border: 1px solid #E2E6D5; border-radius: 12px; margin-bottom: 22px;">
+                <tr>
+                  <td style="padding: 14px 18px;">
+                    <div style="font-size: 13px; color: #556045; line-height: 1.6;">
+                      <span style="display: block; margin-bottom: 3px;"><strong>Requesting User:</strong> ${userName || 'Registered User'}</span>
+                      <span style="display: block; margin-bottom: 3px;"><strong>Account Email:</strong> ${toEmail}</span>
+                      <span style="display: block;"><strong>Action:</strong> ${actionText}</span>
+                    </div>
+                  </td>
+                </tr>
+              </table>
 
               <!-- OTP Code Display Box -->
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F5F6E8; border: 2px dashed #5B692D; border-radius: 14px; margin-bottom: 24px;">
