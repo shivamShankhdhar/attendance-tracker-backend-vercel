@@ -314,6 +314,7 @@ export class AttendanceService {
       attendanceDate: rec.attendanceDate,
       status: rec.status,
       checkInTime: rec.checkInTime,
+      checkOutTime: rec.checkOutTime,
       approvedAt: rec.approvedAt,
       source: rec.source,
       verification: rec.verification,
