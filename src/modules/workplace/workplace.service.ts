@@ -280,10 +280,21 @@ export class WorkplaceService {
     landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(encryptedToken)}`;
     landing.search = '';
     const canonicalLink = landing.toString();
-    let joinLink = current.joinShareUrl || canonicalLink;
-    if (!current.joinShareUrl && process.env.BRANCH_KEY) {
-      joinLink = await createDeferredInviteLink(encryptedToken, workplace.name, canonicalLink);
-      await WorkplaceModel.updateOne({ _id: current._id, joinInviteToken: encryptedToken }, { $set: { joinShareUrl: joinLink } });
+
+    let joinLink = canonicalLink;
+    if (process.env.BRANCH_KEY) {
+      if (current.joinShareUrl && current.joinShareUrl.startsWith('https://')) {
+        joinLink = current.joinShareUrl;
+      } else {
+        joinLink = await createDeferredInviteLink(encryptedToken, workplace.name, canonicalLink);
+        await WorkplaceModel.updateOne({ _id: current._id, joinInviteToken: encryptedToken }, { $set: { joinShareUrl: joinLink } });
+      }
+    } else {
+      // Invalidate and fix any stale domain previously stored in joinShareUrl
+      if (current.joinShareUrl !== canonicalLink) {
+        await WorkplaceModel.updateOne({ _id: current._id }, { $set: { joinShareUrl: canonicalLink } });
+      }
+      joinLink = canonicalLink;
     }
     const qrPayload = joinLink;
 
@@ -339,8 +350,21 @@ export class WorkplaceService {
 
   async publicJoinPreview(rawToken: string) {
     const workplace = await this.resolveJoinWorkplace(rawToken);
-    return { workplaceId: workplace._id.toString(), workplaceName: workplace.name,
-      workplaceCode: workplace._id.toString().slice(-6).toUpperCase(), address: workplace.address, description: workplace.description, installLink: workplace.joinShareUrl };
+    let installLink = workplace.joinShareUrl;
+    if (!installLink && workplace.joinInviteToken) {
+      const landing = new URL(env.WORKPLACE_JOIN_URL);
+      landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(workplace.joinInviteToken)}`;
+      landing.search = '';
+      installLink = landing.toString();
+    }
+    return {
+      workplaceId: workplace._id.toString(),
+      workplaceName: workplace.name,
+      workplaceCode: workplace._id.toString().slice(-6).toUpperCase(),
+      address: workplace.address,
+      description: workplace.description,
+      installLink,
+    };
   }
 
   async previewJoin(userId: string, rawToken: string) {
@@ -370,6 +394,7 @@ export class WorkplaceService {
     return {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
+      workplaceCode: workplace._id.toString().slice(-6).toUpperCase(),
       address: workplace.address,
       description: workplace.description,
       timezone: workplace.timezone,

@@ -17,6 +17,7 @@ export const createWorkplaceSchema = z.object({
     .object({
       requireWifi: z.boolean().default(false),
       autoCloseHour: z.number().min(0).max(23).default(23),
+      allowEmployeeViewHistory: z.boolean().default(true).optional(),
     })
     .optional(),
 });

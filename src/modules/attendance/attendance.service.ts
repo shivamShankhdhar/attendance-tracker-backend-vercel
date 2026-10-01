@@ -95,6 +95,15 @@ export class AttendanceService {
       throw new AppError('Workplace membership not found', 404, 'MEMBERSHIP_NOT_FOUND');
     }
 
+    const workplace = await WorkplaceModel.findById(workplaceId);
+    if (!workplace || workplace.status !== 'ACTIVE') {
+      throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
+    }
+
+    if (member.role === 'EMPLOYEE' && workplace.attendanceSettings?.allowEmployeeViewHistory === false) {
+      return [];
+    }
+
     const filter: any = {
       workplaceId: new Types.ObjectId(workplaceId),
       employeeMemberId: member._id,

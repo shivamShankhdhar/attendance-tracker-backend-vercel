@@ -211,10 +211,13 @@ export class EmployeeService {
           'EMAIL_MISMATCH'
         );
       }
-    } else if (options.workplaceId && user.email) {
+    } else if (options.workplaceId) {
       member = await WorkplaceMemberModel.findOne({
         workplaceId: new Types.ObjectId(options.workplaceId),
-        invitedEmail: user.email.toLowerCase(),
+        $or: [
+          ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : []),
+          { userId: user._id },
+        ],
         status: 'INVITED',
       });
 

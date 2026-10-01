@@ -16,7 +16,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_IDS: z.string().optional().default(''),
   RETRY_SECRET: z.string().optional().default('dev_retry_secret'),
   APP_NAME: z.string().default('Bizora'),
-  WORKPLACE_JOIN_URL: z.string().url().default('https://bizora.app/join'),
+  WORKPLACE_JOIN_URL: z.string().url().default('https://www.bizora.shivamshankhdhar.online/join'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

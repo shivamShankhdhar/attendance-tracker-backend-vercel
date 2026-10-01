@@ -411,21 +411,31 @@ export class AuthService {
     const memberships = await WorkplaceMemberModel.find({
       $or: [{ userId: user._id }, ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : [])],
       status: { $in: ['ACTIVE', 'INVITED'] },
-    }).populate('workplaceId', 'name timezone address wifiSsid status createdAt');
+    }).populate({
+      path: 'workplaceId',
+      select: 'name timezone address wifiSsid status createdAt ownerId attendanceSettings',
+      populate: { path: 'ownerId', select: 'name email' },
+    });
 
     const mappedMemberships = memberships.map((m: any) => {
       const wp = m.workplaceId;
       const wpId = wp?._id?.toString() || m.workplaceId?.toString() || '';
+      const ownerUser = wp?.ownerId as any;
+      const adminName = ownerUser?.name || 'Workspace Admin';
+      const allowEmployeeViewHistory = wp?.attendanceSettings?.allowEmployeeViewHistory !== false;
       return {
         id: m._id.toString(),
         workplaceId: wpId,
         workplaceName: wp?.name || 'Workplace',
         workplaceCode: wpId ? wpId.slice(-6).toUpperCase() : undefined,
+        adminName,
         address: wp?.address,
         timezone: wp?.timezone || 'Asia/Kolkata',
         role: m.role,
         employeeCode: m.employeeCode,
         status: m.status,
+        allowEmployeeViewHistory,
+        attendanceSettings: wp?.attendanceSettings,
         createdAt: wp?.createdAt || m.createdAt || new Date(),
       };
     }).sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());

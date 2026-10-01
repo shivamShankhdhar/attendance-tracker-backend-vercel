@@ -13,6 +13,7 @@ export interface IWorkplace extends Document {
   attendanceSettings: {
     requireWifi: boolean;
     autoCloseHour: number;
+    allowEmployeeViewHistory?: boolean;
   };
   status: 'ACTIVE' | 'INACTIVE';
   joinQrSecret?: string;
@@ -34,6 +35,7 @@ const workplaceSchema = new Schema<IWorkplace>(
     attendanceSettings: {
       requireWifi: { type: Boolean, default: false },
       autoCloseHour: { type: Number, default: 23 },
+      allowEmployeeViewHistory: { type: Boolean, default: true },
     },
     joinQrSecret: { type: String },
     joinQrEnabled: { type: Boolean, default: true },
