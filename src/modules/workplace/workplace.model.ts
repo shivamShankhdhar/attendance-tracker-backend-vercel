@@ -8,6 +8,7 @@ export interface IWorkplace extends Document {
   address?: string;
   description?: string;
   joinInviteToken?: string;
+  previousJoinTokens?: string[];
   joinShareUrl?: string;
   wifiSsid?: string;
   attendanceSettings: {
@@ -37,6 +38,7 @@ const workplaceSchema = new Schema<IWorkplace>(
     address: { type: String, trim: true },
     description: { type: String, trim: true, maxlength: 300 },
     joinInviteToken: { type: String, unique: true, sparse: true },
+    previousJoinTokens: [{ type: String }],
     joinShareUrl: { type: String },
     wifiSsid: { type: String, trim: true },
     attendanceSettings: {

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { env } from '../../config/env';
 import { createDeferredInviteLink } from './workplace-links';
 import { NotificationOutboxModel } from '../notification/notification.model';
@@ -67,7 +68,7 @@ export class WorkplaceService {
     const workplaceIds = activeMembers.map((m) => (m.workplaceId as any)._id);
 
     const memberCounts = await WorkplaceMemberModel.aggregate([
-      { $match: { workplaceId: { $in: workplaceIds }, status: 'ACTIVE' } },
+      { $match: { workplaceId: { $in: workplaceIds }, role: 'EMPLOYEE', status: 'ACTIVE' } },
       { $group: { _id: '$workplaceId', count: { $sum: 1 } } },
     ]);
     const countMap = new Map<string, number>();
@@ -105,7 +106,7 @@ export class WorkplaceService {
     if (!workplace || workplace.status !== 'ACTIVE') {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
-    const memberCount = await WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, status: 'ACTIVE' });
+    const memberCount = await WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, role: 'EMPLOYEE', status: 'ACTIVE' });
     return {
       id: workplace._id.toString(),
       name: workplace.name,
@@ -234,6 +235,46 @@ export class WorkplaceService {
       if (match && match[1] !== 'dummy') tokenStr = decodeURIComponent(match[1]);
     } catch { /* Raw token or workplace code. */ }
 
+    // 0a. Direct lookup in WorkplaceModel (matches active workplace short code, legacy token, or previous tokens)
+    const directWorkplace = await WorkplaceModel.findOne({
+      $or: [
+        { joinInviteToken: tokenStr.toLowerCase() },
+        { previousJoinTokens: tokenStr.toLowerCase() },
+        { joinInviteToken: tokenStr },
+        { previousJoinTokens: tokenStr },
+      ],
+      status: 'ACTIVE',
+    });
+    if (directWorkplace) {
+      return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret };
+    }
+
+    // 0b. Direct lookup in WorkplaceMemberModel for exact invitation code or hash
+    const directMember = await WorkplaceMemberModel.findOne({
+      $and: [
+        {
+          $or: [
+            { invitationCode: tokenStr.toLowerCase() },
+            { invitationCode: tokenStr },
+            { invitationTokenHash: hashToken(tokenStr.toLowerCase()) },
+            { invitationTokenHash: hashToken(tokenStr) },
+          ],
+        },
+        {
+          $or: [
+            { invitationExpiresAt: { $gt: new Date() } },
+            { invitationExpiresAt: { $exists: false } },
+          ],
+        },
+      ],
+    });
+    if (directMember) {
+      const wp = await WorkplaceModel.findById(directMember.workplaceId);
+      if (wp) {
+        return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
+      }
+    }
+
     // Check if token has structured employee invite format:
     // {workplaceId}-{employeeId} (10 chars e.g. e912-be91c) or legacy {wpId}-{empId}-{timestamp}
     const tokenParts = tokenStr.split('-');
@@ -269,11 +310,6 @@ export class WorkplaceService {
         if (wp) {
           return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
         }
-      }
-      const activeWorkplaces = await WorkplaceModel.find({ status: 'ACTIVE' });
-      const matchedWp = activeWorkplaces.find((w) => w._id.toString().toLowerCase().endsWith(wpPart.toLowerCase()));
-      if (matchedWp) {
-        return { workplaceId: matchedWp._id.toString(), secret: matchedWp.joinQrSecret, isCodeLookup: true };
       }
     } else if (tokenParts.length >= 3 && Types.ObjectId.isValid(tokenParts[0]) && Types.ObjectId.isValid(tokenParts[1])) {
       const [wpId, empId] = tokenParts;
@@ -348,6 +384,29 @@ export class WorkplaceService {
   }
 
   /**
+   * Generate unique short 6 to 8 character workplace invitation code with '-' in between
+   * e.g. '509-250' (7 chars) or '509-250a' (8 chars)
+   */
+  private async generateShortWorkplaceInviteCode(workplaceId: string): Promise<string> {
+    const wpPart = workplaceId.slice(-3).toLowerCase();
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const rndLen = attempt > 12 ? 4 : 3;
+      const rnd = crypto.randomBytes(2).toString('hex').slice(0, rndLen).toLowerCase();
+      const candidate = `${wpPart}-${rnd}`;
+      const conflict = await WorkplaceModel.findOne({
+        $or: [
+          { joinInviteToken: candidate },
+          { previousJoinTokens: candidate },
+        ],
+      });
+      if (!conflict) {
+        return candidate;
+      }
+    }
+    return `${workplaceId.slice(-4).toLowerCase()}-${crypto.randomBytes(2).toString('hex').slice(0, 3).toLowerCase()}`;
+  }
+
+  /**
    * Get secure Join QR code for workplace (EMPLOYER only)
    */
   async getJoinQr(workplaceId: string) {
@@ -356,11 +415,20 @@ export class WorkplaceService {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
 
-    if (!workplace.joinInviteToken) {
-      await WorkplaceModel.updateOne(
-        { _id: workplace._id, joinInviteToken: { $exists: false } },
-        { $set: { joinInviteToken: generateSecureToken(), ...(workplace.joinQrSecret ? {} : { joinQrSecret: generateSecureToken(16) }) } }
-      );
+    // Ensure joinInviteToken exists and is in the modern short format (<= 8 chars, with '-')
+    const isOldLongToken = workplace.joinInviteToken && (workplace.joinInviteToken.length > 8 || !workplace.joinInviteToken.includes('-'));
+    if (!workplace.joinInviteToken || isOldLongToken) {
+      const shortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
+      const updateDoc: any = {
+        $set: {
+          joinInviteToken: shortToken,
+          ...(workplace.joinQrSecret ? {} : { joinQrSecret: generateSecureToken(16) }),
+        },
+      };
+      if (workplace.joinInviteToken) {
+        updateDoc.$addToSet = { previousJoinTokens: workplace.joinInviteToken };
+      }
+      await WorkplaceModel.updateOne({ _id: workplace._id }, updateDoc);
     }
     const current = await WorkplaceModel.findById(workplace._id).orFail();
     const encryptedToken = current.joinInviteToken!;
@@ -407,8 +475,11 @@ export class WorkplaceService {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
 
+    const shortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
     workplace.joinQrSecret = generateSecureToken(16);
-    workplace.joinInviteToken = generateSecureToken();
+    workplace.joinInviteToken = shortToken;
+    // When rotating, intentionally invalidate previous tokens
+    workplace.previousJoinTokens = [];
     workplace.joinShareUrl = undefined;
     await workplace.save();
 
@@ -461,11 +532,12 @@ export class WorkplaceService {
         UserModel.findById(workplace.ownerId).select('name'),
         WorkplaceMemberModel.countDocuments({
           workplaceId: workplace._id,
-          status: { $in: ['ACTIVE', 'INVITED'] },
+          role: 'EMPLOYEE',
+          status: 'ACTIVE',
         }),
       ]);
       baseResult.ownerName = owner?.name || 'Workplace Admin';
-      baseResult.activeMembersCount = Math.max(1, activeMembersCount);
+      baseResult.activeMembersCount = activeMembersCount;
     }
 
     return baseResult;
@@ -539,8 +611,12 @@ export class WorkplaceService {
 
     const activeMembersCount = await WorkplaceMemberModel.countDocuments({
       workplaceId: workplace._id,
+      role: 'EMPLOYEE',
       status: 'ACTIVE',
     });
+
+    const isOwner = workplace.ownerId.toString() === userId.toString();
+    const isEmployer = Boolean(existingMember && existingMember.role === 'EMPLOYER') || isOwner;
 
     const owner = await UserModel.findById(workplace.ownerId);
 
@@ -554,8 +630,10 @@ export class WorkplaceService {
       ownerName: owner?.name || 'Workplace Admin',
       ownerAvatarUrl: owner?.avatarUrl,
       activeMembersCount,
-      alreadyMember: Boolean(existingMember),
-      isInvited: Boolean(invitedMember),
+      alreadyMember: Boolean(existingMember) || isOwner,
+      isOwner,
+      isEmployer,
+      isInvited: Boolean(invitedMember) && !isOwner,
       invitedRole: invitedMember?.role || 'EMPLOYEE',
       latestRequest: pendingRequest ? { id: pendingRequest._id.toString(), status: pendingRequest.status, requestedAt: pendingRequest.createdAt, reviewedAt: pendingRequest.reviewedAt, rejectionReason: pendingRequest.rejectionReason } : null,
       pendingRequest: pendingRequest?.status === 'PENDING'
@@ -760,7 +838,7 @@ export class WorkplaceService {
     if (!workplace) throw new AppError('Workplace no longer available', 404, 'WORKPLACE_NOT_FOUND');
     const [owner, activeMembersCount, member] = await Promise.all([
       UserModel.findById(workplace.ownerId),
-      WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, status: 'ACTIVE' }),
+      WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, role: 'EMPLOYEE', status: 'ACTIVE' }),
       WorkplaceMemberModel.findOne({ workplaceId: workplace._id, userId, status: 'ACTIVE' }),
     ]);
     return {
