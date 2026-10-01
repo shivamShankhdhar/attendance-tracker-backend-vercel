@@ -1074,29 +1074,33 @@ export class WorkplaceService {
       status: 'PENDING',
     });
 
-    // Connected employees (pinged within last 2 minutes)
-    const twoMinutesAgo = new Date(Date.now() - 120000);
-    const connectedMembers = await WorkplaceMemberModel.find({
+    // Find all active employees in the workplace
+    const activeMembers = await WorkplaceMemberModel.find({
       workplaceId: new Types.ObjectId(workplaceId),
       role: 'EMPLOYEE',
       status: 'ACTIVE',
-      lastWifiSeenAt: { $gte: twoMinutesAgo },
     }).populate('userId', 'avatarUrl');
+
+    const memberIds = activeMembers.map((m) => m._id);
 
     const todayAttendances = await AttendanceModel.find({
       workplaceId: new Types.ObjectId(workplaceId),
       attendanceDate: todayDate,
-      employeeMemberId: { $in: connectedMembers.map((m) => m._id) },
+      employeeMemberId: { $in: memberIds },
     });
 
     const pendingRequests = await AttendanceRequestModel.find({
       workplaceId: new Types.ObjectId(workplaceId),
       attendanceDate: todayDate,
       status: 'PENDING',
-      employeeMemberId: { $in: connectedMembers.map((m) => m._id) },
+      employeeMemberId: { $in: memberIds },
     });
 
-    const connectedEmployees = connectedMembers.map((m: any) => {
+    // 3 minutes cutoff for live Wi-Fi presence
+    const wifiActiveThresholdMs = 180000;
+    const now = Date.now();
+
+    const connectedEmployees = activeMembers.map((m: any) => {
       const att = todayAttendances.find((a) => a.employeeMemberId.toString() === m._id.toString());
       const pReq = pendingRequests.find((r) => r.employeeMemberId.toString() === m._id.toString());
 
@@ -1111,12 +1115,17 @@ export class WorkplaceService {
         attendanceStatus = 'PENDING';
       }
 
+      const isWifiConnected = Boolean(
+        m.lastWifiSeenAt && (now - new Date(m.lastWifiSeenAt).getTime() <= wifiActiveThresholdMs)
+      );
+
       return {
         memberId: m._id.toString(),
         name: m.name,
         employeeCode: m.employeeCode || 'EMP',
         avatarUrl: m.userId?.avatarUrl || undefined,
-        isWifiConnected: true,
+        isWifiConnected,
+        lastWifiSeenAt: m.lastWifiSeenAt,
         attendanceStatus,
         checkInTime: att?.checkInTime,
         checkOutTime: att?.checkOutTime,
