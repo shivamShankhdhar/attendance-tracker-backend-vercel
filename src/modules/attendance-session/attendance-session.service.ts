@@ -26,7 +26,41 @@ export class AttendanceSessionService {
 
     if (session) {
       if (session.status === 'CLOSED') {
-        throw new AppError('Today attendance session was already closed', 400, 'SESSION_ALREADY_CLOSED');
+        // Reopen the closed session with a fresh QR token and extended expiry
+        const rawQrToken = generateSecureToken(32);
+        const qrTokenHash = hashToken(rawQrToken);
+        const encryptedQrToken = encryptToken(rawQrToken);
+        const expiresAt = new Date(Date.now() + 18 * 60 * 60 * 1000);
+
+        session.status = 'OPEN';
+        session.qrTokenHash = qrTokenHash;
+        session.encryptedQrToken = encryptedQrToken;
+        session.expiresAt = expiresAt;
+        session.openedAt = new Date();
+        await session.save();
+
+        await AuditLogModel.create({
+          workplaceId: workplace._id,
+          actorId: new Types.ObjectId(actorId),
+          action: 'ATTENDANCE_SESSION_REOPENED',
+          entityId: session._id.toString(),
+          metadata: { attendanceDate: todayDate },
+        });
+
+        const basePayload = `attendance://checkin?token=${rawQrToken}&workplace=${workplace._id}`;
+        return {
+          session: {
+            id: session._id.toString(),
+            workplaceId: session.workplaceId.toString(),
+            attendanceDate: session.attendanceDate,
+            status: session.status,
+            openedAt: session.openedAt,
+            expiresAt: session.expiresAt,
+          },
+          qrToken: rawQrToken,
+          qrPayload: basePayload,
+          checkoutQrPayload: `${basePayload}&type=checkout`,
+        };
       }
 
       // Decrypt the existing token so employer sees the identical QR
