@@ -14,6 +14,8 @@ export interface IWorkplaceMember extends Document {
   invitationTokenHash?: string;
   invitationExpiresAt?: Date;
   joinedAt?: Date;
+  lastWifiSeenAt?: Date;
+  lastConnectedSsid?: string;
   createdAt: Date;
   updatedAt: Date;
 }

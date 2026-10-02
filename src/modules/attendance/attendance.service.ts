@@ -26,7 +26,7 @@ export class AttendanceService {
       AttendanceModel.find({ workplaceId: workplace._id, attendanceDate: todayDate })
         .select('employeeMemberId status checkInTime checkOutTime approvedAt source').lean(),
       AttendanceRequestModel.find({ workplaceId: workplace._id, attendanceDate: todayDate, status: 'PENDING' })
-        .select('employeeMemberId requestedAt').lean(),
+        .select('employeeMemberId requestedAt requestType').lean(),
     ]);
     const attendanceMap = new Map(attendances.map((a) => [a.employeeMemberId.toString(), a]));
     const pendingMap = new Map(requests.map((r) => [r.employeeMemberId.toString(), r]));
@@ -45,6 +45,13 @@ export class AttendanceService {
       let checkOutTime: Date | undefined;
       let approvedAt: Date | undefined;
       let requestedAt: Date | undefined;
+      let requestType: 'CHECK_IN' | 'CHECK_OUT' | undefined;
+
+      if (pendingReq) {
+        pendingCount++;
+        requestedAt = pendingReq.requestedAt;
+        requestType = pendingReq.requestType || 'CHECK_IN';
+      }
 
       if (attendance) {
         status = attendance.status;
@@ -54,8 +61,6 @@ export class AttendanceService {
         if (attendance.status === 'PRESENT') presentCount++;
       } else if (pendingReq) {
         status = 'PENDING';
-        requestedAt = pendingReq.requestedAt;
-        pendingCount++;
       } else {
         notMarkedCount++;
       }
@@ -69,8 +74,9 @@ export class AttendanceService {
         checkInTime,
         checkOutTime,
         approvedAt,
-        requestedAt,
+        requestedAt: requestedAt || pendingReq?.requestedAt,
         requestId: pendingReq?._id?.toString(),
+        requestType: requestType || (pendingReq as any)?.requestType,
         source: attendance?.source,
       };
     });

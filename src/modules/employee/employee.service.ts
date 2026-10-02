@@ -17,14 +17,14 @@ export class EmployeeService {
       workplaceId: new Types.ObjectId(workplaceId),
       role: 'EMPLOYEE',
     })
-      .populate('userId', 'avatarUrl')
+      .populate('userId', 'avatarUrl email')
       .sort({ createdAt: -1 });
 
     return employees.map((emp: any) => ({
       id: emp._id.toString(),
       name: emp.name,
       employeeCode: emp.employeeCode,
-      invitedEmail: emp.invitedEmail,
+      invitedEmail: emp.invitedEmail || emp.userId?.email || undefined,
       status: emp.status,
       hasPin: Boolean(emp.pinHash),
       avatarUrl: emp.userId?.avatarUrl || undefined,
