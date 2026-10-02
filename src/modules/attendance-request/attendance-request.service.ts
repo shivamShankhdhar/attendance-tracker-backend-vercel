@@ -14,7 +14,7 @@ export class AttendanceRequestService {
   /**
    * Employee submits attendance request from QR scan or direct check-in request
    */
-  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'WIFI' | 'DIRECT' | 'MANUAL'; wifiMode?: boolean; note?: string; requestType?: 'CHECK_IN' | 'CHECK_OUT' }) {
+  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'DIRECT' | 'MANUAL'; note?: string; requestType?: 'CHECK_IN' | 'CHECK_OUT' }) {
     let session: any = null;
     let workplace: any = null;
     let todayDate: string = '';
@@ -182,26 +182,101 @@ export class AttendanceRequestService {
       }
     }
 
-    // 6. Section 11: Wi-Fi verification signal
+    // Retain workplace network verification for QR attendance requests.
     let wifiVerified: boolean | null = null;
-    const isRadarActive = Boolean(
-      workplace.wifiRadarSession?.isActive &&
-      (!workplace.wifiRadarSession?.expiresAt || new Date(workplace.wifiRadarSession.expiresAt) > new Date())
-    );
-
     if (workplace.wifiSsid && data.deviceSsid) {
       wifiVerified = workplace.wifiSsid.trim().toLowerCase() === data.deviceSsid.trim().toLowerCase();
-    } else if (data.wifiMode || data.source === 'WIFI') {
-      if (isRadarActive) {
-        wifiVerified = true;
-      } else if (workplace.wifiSsid) {
-        wifiVerified = false;
-      }
     }
 
     const requestedAt = new Date();
     const qrVerified = Boolean(data.qrToken);
 
+    // ── QR SCAN → AUTO-APPROVE (no employer action needed) ─────────────────────
+    if (qrVerified) {
+      const request = await AttendanceRequestModel.create({
+        workplaceId: workplace._id,
+        attendanceSessionId: session._id,
+        employeeMemberId: member._id,
+        userId: new Types.ObjectId(userId),
+        attendanceDate: todayDate,
+        requestedAt,
+        requestType,
+        verification: { qrVerified: true, wifiVerified, deviceSsid: data.deviceSsid },
+        status: 'APPROVED',
+        reviewedAt: requestedAt,
+      });
+
+      if (requestType === 'CHECK_OUT') {
+        await AttendanceModel.findOneAndUpdate(
+          { workplaceId: workplace._id, employeeMemberId: member._id, attendanceDate: todayDate },
+          { $set: { checkOutTime: requestedAt } },
+          { new: true }
+        );
+      } else {
+        await AttendanceModel.findOneAndUpdate(
+          { workplaceId: workplace._id, employeeMemberId: member._id, attendanceDate: todayDate },
+          {
+            $setOnInsert: {
+              workplaceId: workplace._id,
+              employeeMemberId: member._id,
+              userId: new Types.ObjectId(userId),
+              attendanceDate: todayDate,
+              status: 'PRESENT',
+              checkInTime: requestedAt,
+              approvedAt: requestedAt,
+              source: 'QR_SCAN',
+              attendanceRequestId: request._id,
+              verification: { qr: true, wifi: wifiVerified },
+            },
+          },
+          { upsert: true, new: true }
+        );
+      }
+
+      await AuditLogModel.create({
+        workplaceId: workplace._id,
+        actorId: new Types.ObjectId(userId),
+        action: requestType === 'CHECK_OUT' ? 'ATTENDANCE_CHECKOUT_AUTO_APPROVED' : 'ATTENDANCE_AUTO_APPROVED',
+        entityId: request._id.toString(),
+        metadata: { attendanceDate: todayDate, source: 'QR_SCAN' },
+      });
+
+      await NotificationOutboxModel.create({
+        eventId: `qr_auto_${request._id.toString()}_${Date.now()}`,
+        recipientId: new Types.ObjectId(userId),
+        workplaceId: workplace._id,
+        kind: requestType === 'CHECK_OUT' ? 'CHECK_OUT_APPROVED' : 'ATTENDANCE_APPROVED',
+        title: requestType === 'CHECK_OUT' ? 'Check-Out Confirmed!' : 'Attendance Confirmed!',
+        body:
+          requestType === 'CHECK_OUT'
+            ? `Your check-out for ${todayDate} was recorded via QR scan.`
+            : `Your attendance for ${todayDate} was recorded via QR scan.`,
+        data: { requestId: request._id.toString(), requestType, attendanceDate: todayDate },
+        status: 'PENDING',
+        attempts: 0,
+        nextAttemptAt: new Date(),
+      });
+
+      return {
+        request: {
+          id: request._id.toString(),
+          workplaceId: workplace._id.toString(),
+          workplaceName: workplace.name,
+          status: 'APPROVED',
+          requestedAt: request.requestedAt,
+          verification: request.verification,
+          requestType: request.requestType,
+          autoApproved: true,
+        },
+        autoApproved: true,
+        message:
+          requestType === 'CHECK_OUT'
+            ? 'Check-out recorded! QR scan verified.'
+            : 'Attendance recorded! QR scan verified.',
+      };
+    }
+
+    // ── DIRECT REQUEST → PENDING (needs employer approval) ─────────────────────
     const request = await AttendanceRequestModel.create({
       workplaceId: workplace._id,
       attendanceSessionId: session._id,
@@ -210,24 +285,10 @@ export class AttendanceRequestService {
       attendanceDate: todayDate,
       requestedAt,
       requestType,
-      verification: {
-        qrVerified,
-        wifiVerified,
-        deviceSsid: data.deviceSsid,
-      },
+      verification: { qrVerified, wifiVerified, deviceSsid: data.deviceSsid },
       status: 'PENDING',
     });
 
-    // Update member's Wi-Fi presence timestamp so they appear immediately in floating radar
-    if (data.source === 'WIFI' || data.wifiMode || data.deviceSsid || isRadarActive) {
-      member.lastWifiSeenAt = requestedAt;
-      if (data.deviceSsid || workplace.wifiSsid) {
-        member.lastConnectedSsid = data.deviceSsid || workplace.wifiSsid;
-      }
-      await member.save();
-    }
-
-    // 7. Persist notification job for employer
     await NotificationOutboxModel.create({
       eventId: `req_${request._id.toString()}_${Date.now()}`,
       recipientId: workplace.ownerId,
@@ -263,6 +324,7 @@ export class AttendanceRequestService {
           : 'Attendance requested! Waiting for your employer to approve.',
     };
   }
+
 
   /**
    * Employer lists attendance requests for workplace

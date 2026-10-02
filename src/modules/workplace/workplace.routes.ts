@@ -131,30 +131,3 @@ workplaceRouter.post(
 
 // Explicit creation endpoint for invite-link clients; the QR endpoint remains compatible.
 workplaceRouter.post('/:workplaceId/invite-link', requireWorkplaceMember(), requireWorkplaceRole(['EMPLOYER']), workplaceController.getJoinQr);
-
-// Wi-Fi Radar Listening Mode (EMPLOYER starts/stops, all members can check status)
-workplaceRouter.post(
-  '/:workplaceId/wifi-radar/start',
-  requireWorkplaceMember(),
-  requireWorkplaceRole(['EMPLOYER']),
-  workplaceController.startWifiRadar
-);
-
-workplaceRouter.post(
-  '/:workplaceId/wifi-radar/stop',
-  requireWorkplaceMember(),
-  requireWorkplaceRole(['EMPLOYER']),
-  workplaceController.stopWifiRadar
-);
-
-workplaceRouter.get(
-  '/:workplaceId/wifi-radar/status',
-  requireWorkplaceMember(),
-  workplaceController.getWifiRadarStatus
-);
-
-workplaceRouter.post(
-  '/:workplaceId/wifi-radar/ping',
-  requireWorkplaceMember(),
-  workplaceController.pingWifiRadar
-);

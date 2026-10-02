@@ -232,6 +232,15 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(reqRes.body.data.request.verification.wifiVerified, true);
     attendanceRequestId = reqRes.body.data.request.id;
 
+    const pendingRoster = await makeRequest(`/api/v1/workplaces/${workplaceId}/attendance/today`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${employerToken}` },
+    });
+    const pendingEmployee = pendingRoster.body.data.roster.find((row: any) => row.memberId === employeeMemberId);
+    assert.equal(pendingEmployee.status, 'PENDING');
+    assert.equal(pendingEmployee.checkInTime, undefined);
+    assert.ok(pendingEmployee.requestedAt);
+
     // Verify Attendance record does NOT exist yet
     const attendanceCheck = await AttendanceModel.findOne({
       workplaceId,
@@ -737,4 +746,3 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(newVerifyRes.body.data.verified, true);
   });
 });
-

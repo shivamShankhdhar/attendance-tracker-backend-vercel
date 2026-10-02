@@ -44,6 +44,7 @@ export class AttendanceService {
       let checkInTime: Date | undefined;
       let checkOutTime: Date | undefined;
       let approvedAt: Date | undefined;
+      let requestedAt: Date | undefined;
 
       if (attendance) {
         status = attendance.status;
@@ -53,7 +54,7 @@ export class AttendanceService {
         if (attendance.status === 'PRESENT') presentCount++;
       } else if (pendingReq) {
         status = 'PENDING';
-        checkInTime = pendingReq.requestedAt;
+        requestedAt = pendingReq.requestedAt;
         pendingCount++;
       } else {
         notMarkedCount++;
@@ -68,6 +69,7 @@ export class AttendanceService {
         checkInTime,
         checkOutTime,
         approvedAt,
+        requestedAt,
         requestId: pendingReq?._id?.toString(),
         source: attendance?.source,
       };

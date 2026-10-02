@@ -31,6 +31,7 @@ export class AttendanceSessionService {
 
       // Decrypt the existing token so employer sees the identical QR
       const decryptedToken = decryptToken(session.encryptedQrToken);
+      const basePayload = `attendance://checkin?token=${decryptedToken}&workplace=${workplace._id}`;
       return {
         session: {
           id: session._id.toString(),
@@ -41,7 +42,8 @@ export class AttendanceSessionService {
           expiresAt: session.expiresAt,
         },
         qrToken: decryptedToken,
-        qrPayload: `attendance://checkin?token=${decryptedToken}&workplace=${workplace._id}`,
+        qrPayload: basePayload,
+        checkoutQrPayload: `${basePayload}&type=checkout`,
       };
     }
 
@@ -73,6 +75,7 @@ export class AttendanceSessionService {
       metadata: { attendanceDate: todayDate },
     });
 
+    const basePayloadNew = `attendance://checkin?token=${rawQrToken}&workplace=${workplace._id}`;
     return {
       session: {
         id: session._id.toString(),
@@ -83,7 +86,8 @@ export class AttendanceSessionService {
         expiresAt: session.expiresAt,
       },
       qrToken: rawQrToken,
-      qrPayload: `attendance://checkin?token=${rawQrToken}&workplace=${workplace._id}`,
+      qrPayload: basePayloadNew,
+      checkoutQrPayload: `${basePayloadNew}&type=checkout`,
     };
   }
 
@@ -123,11 +127,13 @@ export class AttendanceSessionService {
       expiresAt: session.expiresAt,
     };
 
+    const baseQrPayload = rawQrToken ? `attendance://checkin?token=${rawQrToken}&workplace=${workplace._id}` : null;
     return {
       session: sessionObj,
       ...sessionObj,
       qrToken: rawQrToken,
-      qrPayload: rawQrToken ? `attendance://checkin?token=${rawQrToken}&workplace=${workplace._id}` : null,
+      qrPayload: baseQrPayload,
+      checkoutQrPayload: baseQrPayload ? `${baseQrPayload}&type=checkout` : null,
     };
   }
 
