@@ -286,9 +286,10 @@ export class WorkplaceService {
       if (match && match[1] !== 'dummy') tokenStr = decodeURIComponent(match[1]);
     } catch { /* Raw token or workplace code. */ }
 
-    // 0a. Direct lookup in WorkplaceModel (matches active workplace short code, legacy token, or previous tokens)
+    // 0a. Direct lookup in WorkplaceModel (matches workplaceCode, active workplace short code, legacy token, or previous tokens)
     const directWorkplace = await WorkplaceModel.findOne({
       $or: [
+        { workplaceCode: tokenStr.toUpperCase() },
         { joinInviteToken: tokenStr.toLowerCase() },
         { previousJoinTokens: tokenStr.toLowerCase() },
         { joinInviteToken: tokenStr },
@@ -297,7 +298,7 @@ export class WorkplaceService {
       status: 'ACTIVE',
     });
     if (directWorkplace) {
-      return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret };
+      return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret, isCodeLookup: true };
     }
 
     // 0b. Direct lookup in WorkplaceMemberModel for exact invitation code or hash
