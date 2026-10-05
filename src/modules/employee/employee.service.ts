@@ -414,13 +414,17 @@ export class EmployeeService {
       await TeamModel.findByIdAndUpdate(member.teamId, { $inc: { memberCount: -1 } });
     }
 
-    await AuditLogModel.create({
-      workplaceId: new Types.ObjectId(workplaceId),
-      actorId: new Types.ObjectId(actorId),
-      action: 'EMPLOYEE_DELETED',
-      entityId: member._id.toString(),
-      metadata: { employeeName: member.name, employeeCode: member.employeeCode },
-    });
+    try {
+      await AuditLogModel.create({
+        workplaceId: new Types.ObjectId(workplaceId),
+        actorId: new Types.ObjectId(actorId),
+        action: 'EMPLOYEE_DISABLED',
+        entityId: member._id.toString(),
+        metadata: { employeeName: member.name, employeeCode: member.employeeCode, deleted: true },
+      });
+    } catch {
+      // Non-fatal if audit fails
+    }
 
     return { success: true, message: 'Employee deleted successfully' };
   }
