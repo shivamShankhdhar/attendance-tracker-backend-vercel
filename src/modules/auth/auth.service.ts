@@ -187,7 +187,17 @@ export class AuthService {
     let workplace: any = null;
 
     if (workplaceId) {
-      workplace = await WorkplaceModel.findById(workplaceId);
+      const cleanWp = workplaceId.trim();
+      if (Types.ObjectId.isValid(cleanWp)) {
+        workplace = await WorkplaceModel.findById(cleanWp);
+      } else {
+        workplace = await WorkplaceModel.findOne({
+          $or: [
+            { workplaceCode: cleanWp.toUpperCase() },
+            { code: cleanWp.toUpperCase() },
+          ],
+        });
+      }
       if (!workplace || workplace.status !== 'ACTIVE') {
         throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_NOT_FOUND');
       }
