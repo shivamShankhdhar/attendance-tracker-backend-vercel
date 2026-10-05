@@ -4,6 +4,7 @@ export interface ITeam extends Document {
   _id: Types.ObjectId;
   workplaceId: Types.ObjectId;
   name: string;
+  teamCode?: string;
   description?: string;
   color?: string;
   isDefault: boolean;
@@ -15,6 +16,7 @@ const teamSchema = new Schema<ITeam>(
   {
     workplaceId: { type: Schema.Types.ObjectId, ref: 'Workplace', required: true, index: true },
     name: { type: String, required: true, trim: true },
+    teamCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true, index: true },
     description: { type: String, trim: true, maxlength: 300 },
     color: { type: String, default: '#5B692D' },
     isDefault: { type: Boolean, default: false },

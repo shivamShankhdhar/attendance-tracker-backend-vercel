@@ -69,10 +69,15 @@ export class EmployeeService {
 
     // Resolve or assign team (Hierarchy: Workplace -> Team -> Team Members)
     let assignedTeamId: Types.ObjectId;
-    if (data.teamId) {
+    const teamLookup = data.teamId || (data as any).teamCode;
+    if (teamLookup) {
+      const isMongoId = Types.ObjectId.isValid(teamLookup);
       const team = await TeamModel.findOne({
-        _id: new Types.ObjectId(data.teamId),
         workplaceId: new Types.ObjectId(workplaceId),
+        $or: [
+          ...(isMongoId ? [{ _id: new Types.ObjectId(teamLookup) }] : []),
+          { teamCode: teamLookup.trim().toUpperCase() },
+        ],
       });
       if (!team) {
         throw new AppError('Selected team does not exist in this workplace', 404, 'TEAM_NOT_FOUND');
@@ -211,10 +216,15 @@ export class EmployeeService {
 
     if (data.name) member.name = data.name.trim();
     if (data.employeeCode) member.employeeCode = data.employeeCode.trim().toUpperCase();
-    if (data.teamId) {
+    if (data.teamId || (data as any).teamCode) {
+      const teamLookup = data.teamId || (data as any).teamCode;
+      const isMongoId = Types.ObjectId.isValid(teamLookup);
       const team = await TeamModel.findOne({
-        _id: new Types.ObjectId(data.teamId),
         workplaceId: new Types.ObjectId(workplaceId),
+        $or: [
+          ...(isMongoId ? [{ _id: new Types.ObjectId(teamLookup) }] : []),
+          { teamCode: teamLookup.trim().toUpperCase() },
+        ],
       });
       if (!team) {
         throw new AppError('Selected team does not exist in this workplace', 404, 'TEAM_NOT_FOUND');

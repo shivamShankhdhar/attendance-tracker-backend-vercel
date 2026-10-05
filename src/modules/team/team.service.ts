@@ -1,8 +1,43 @@
+import crypto from 'crypto';
 import { Types } from 'mongoose';
 import { TeamModel, ITeam } from './team.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
 import { AppError } from '../../middleware/errorHandler';
+
+const CODE_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+/**
+ * Generate cryptographically random unique team code strictly 7 to 8 characters (e.g. TM7K9P2X)
+ */
+export function generateTeamCode(): string {
+  let result = 'TM';
+  const randomBytes = crypto.randomBytes(6);
+  for (let i = 0; i < 6; i++) {
+    result += CODE_CHARS[randomBytes[i] % CODE_CHARS.length];
+  }
+  return result; // Exactly 8 characters (e.g. TM8K4X2P)
+}
+
+/**
+ * Format or derive a unique 7-8 character team code for backward-compatible existing teams
+ */
+export function formatTeamCode(team: { teamCode?: string; _id?: any }): string {
+  if (team.teamCode && team.teamCode.length >= 7 && team.teamCode.length <= 8) {
+    return team.teamCode.toUpperCase();
+  }
+  if (team.teamCode) {
+    return team.teamCode.toUpperCase().slice(0, 8);
+  }
+  const idStr = team._id ? team._id.toString() : '';
+  const hash = crypto.createHash('sha256').update(idStr).digest('hex').toUpperCase();
+  let code = 'TM';
+  for (let i = 0; i < 6; i++) {
+    const byte = parseInt(hash.slice(i * 2, i * 2 + 2), 16);
+    code += CODE_CHARS[byte % CODE_CHARS.length];
+  }
+  return code; // 8 characters
+}
 
 export class TeamService {
   /**
@@ -16,27 +51,42 @@ export class TeamService {
       const anyTeam = await TeamModel.findOne({ workplaceId: wpId });
       if (anyTeam) {
         anyTeam.isDefault = true;
+        if (!anyTeam.teamCode) {
+          anyTeam.teamCode = formatTeamCode(anyTeam);
+        }
         await anyTeam.save();
         return anyTeam;
       }
+
+      let teamCode = generateTeamCode();
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const conflict = await TeamModel.findOne({ teamCode });
+        if (!conflict) break;
+        teamCode = generateTeamCode();
+      }
+
       defaultTeam = await TeamModel.create({
         workplaceId: wpId,
         name: 'General',
         description: 'Default workplace team',
         color: '#5B692D',
         isDefault: true,
+        teamCode,
       });
+    } else if (!defaultTeam.teamCode) {
+      defaultTeam.teamCode = formatTeamCode(defaultTeam);
+      await defaultTeam.save();
     }
     return defaultTeam;
   }
 
   /**
-   * Create a new team in a workplace
+   * Create a new team in a workplace with unique 7-8 char teamCode
    */
   async createTeam(
     workplaceId: string,
     actorId: string,
-    data: { name: string; description?: string; color?: string }
+    data: { name: string; description?: string; color?: string; teamCode?: string }
   ) {
     const wp = await WorkplaceModel.findById(workplaceId);
     if (!wp || wp.status !== 'ACTIVE') {
@@ -54,18 +104,33 @@ export class TeamService {
 
     const count = await TeamModel.countDocuments({ workplaceId: new Types.ObjectId(workplaceId) });
 
+    let teamCode = data.teamCode?.trim().toUpperCase() || generateTeamCode();
+    // Validate teamCode length (7 to 8 chars)
+    if (teamCode.length < 7 || teamCode.length > 8) {
+      teamCode = generateTeamCode();
+    }
+
+    // Ensure uniqueness
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const conflict = await TeamModel.findOne({ teamCode });
+      if (!conflict) break;
+      teamCode = generateTeamCode();
+    }
+
     const team = await TeamModel.create({
       workplaceId: new Types.ObjectId(workplaceId),
       name: trimmedName,
       description: data.description?.trim(),
       color: data.color || '#5B692D',
       isDefault: count === 0,
+      teamCode,
     });
 
     return {
       id: team._id.toString(),
       workplaceId: team.workplaceId.toString(),
       name: team.name,
+      teamCode: team.teamCode,
       description: team.description,
       color: team.color,
       isDefault: team.isDefault,
@@ -116,24 +181,46 @@ export class TeamService {
       }
     }
 
-    return teams.map((team) => {
-      const tIdStr = team._id.toString();
-      const teamMembers = teamMemberMap.get(tIdStr) || [];
-      // If this is default team and there are unassigned members, attach them
-      const fullMembers = team.isDefault ? [...teamMembers, ...unassignedMembers] : teamMembers;
+    return await Promise.all(
+      teams.map(async (team) => {
+        const tIdStr = team._id.toString();
+        const teamMembers = teamMemberMap.get(tIdStr) || [];
+        // If this is default team and there are unassigned members, attach them
+        const fullMembers = team.isDefault ? [...teamMembers, ...unassignedMembers] : teamMembers;
 
-      return {
-        id: tIdStr,
-        workplaceId: team.workplaceId.toString(),
-        name: team.name,
-        description: team.description,
-        color: team.color,
-        isDefault: team.isDefault,
-        memberCount: fullMembers.length,
-        members: fullMembers,
-        createdAt: team.createdAt,
-      };
-    });
+        let code = team.teamCode;
+        if (!code) {
+          code = formatTeamCode(team);
+          team.teamCode = code;
+          await team.save().catch(() => {});
+        }
+
+        return {
+          id: tIdStr,
+          workplaceId: team.workplaceId.toString(),
+          name: team.name,
+          teamCode: code,
+          description: team.description,
+          color: team.color,
+          isDefault: team.isDefault,
+          memberCount: fullMembers.length,
+          members: fullMembers,
+          createdAt: team.createdAt,
+        };
+      })
+    );
+  }
+
+  /**
+   * Find team by unique teamCode (7-8 chars) or id
+   */
+  async getTeamByCode(code: string) {
+    const cleanCode = code.trim().toUpperCase();
+    let team = await TeamModel.findOne({ teamCode: cleanCode });
+    if (!team && Types.ObjectId.isValid(code)) {
+      team = await TeamModel.findById(code);
+    }
+    return team;
   }
 
   /**

@@ -6,6 +6,7 @@ import { Types, connection } from 'mongoose';
 import { WorkplaceModel } from './workplace.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { TeamModel } from '../team/team.model';
+import { generateTeamCode } from '../team/team.service';
 import { WorkplaceJoinRequestModel } from './workplace-join-request.model';
 import { UserModel } from '../auth/user.model';
 import { AuditLogModel } from '../audit/audit.model';
@@ -79,13 +80,14 @@ export class WorkplaceService {
       status: 'ACTIVE',
     });
 
-    // Auto-create initial default Team for hierarchy
+    // Auto-create initial default Team for hierarchy with 7-8 char unique teamCode
     const defaultTeam = await TeamModel.create({
       workplaceId: workplace._id,
       name: 'General',
       description: 'Default team',
       color: '#5B692D',
       isDefault: true,
+      teamCode: generateTeamCode(),
     });
 
     // Atomically create EMPLOYER membership assigned to default team
@@ -247,7 +249,7 @@ export class WorkplaceService {
   /**
    * Helper to parse and decrypt join token from various scan formats
    */
-  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; secret?: string; isCodeLookup?: boolean }> {
+  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean }> {
     let tokenStr = rawInput.trim();
     // Handle surrounding quotes
     tokenStr = tokenStr.replace(/^["']|["']$/g, '').trim();
@@ -260,21 +262,22 @@ export class WorkplaceService {
       }
     }
 
-    // Handle bizora://join?token=... or ?code=... or https://...?token=...
-    if (tokenStr.includes('token=') || tokenStr.includes('code=') || tokenStr.includes('invite=')) {
+    // Handle bizora://join?token=... or ?code=... or ?teamCode=... or https://...?token=...
+    if (tokenStr.includes('token=') || tokenStr.includes('code=') || tokenStr.includes('invite=') || tokenStr.includes('teamCode=') || tokenStr.includes('team=')) {
       try {
         const normalized = tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
         const url = new URL(normalized);
-        const qToken = url.searchParams.get('token') || url.searchParams.get('code') || url.searchParams.get('invite');
+        const qToken = url.searchParams.get('token') || url.searchParams.get('code') || url.searchParams.get('teamCode') || url.searchParams.get('invite') || url.searchParams.get('team');
         if (qToken) tokenStr = qToken;
       } catch {
-        const match = tokenStr.match(/(?:token|code|invite)=([^&]+)/);
+        const match = tokenStr.match(/(?:token|code|teamCode|invite|team)=([^&]+)/);
         if (match) tokenStr = decodeURIComponent(match[1]);
       }
     } else if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
       try {
         const parsed = JSON.parse(tokenStr);
         if (parsed.token) tokenStr = parsed.token;
+        if (parsed.teamCode) tokenStr = parsed.teamCode;
       } catch {
         // Continue with raw string
       }
@@ -299,6 +302,20 @@ export class WorkplaceService {
     });
     if (directWorkplace) {
       return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret, isCodeLookup: true };
+    }
+
+    // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode
+    const teamMatch = await TeamModel.findOne({ teamCode: tokenStr.toUpperCase() });
+    if (teamMatch) {
+      const wp = await WorkplaceModel.findById(teamMatch.workplaceId);
+      if (wp && wp.status === 'ACTIVE') {
+        return {
+          workplaceId: wp._id.toString(),
+          teamId: teamMatch._id.toString(),
+          secret: wp.joinQrSecret,
+          isCodeLookup: true,
+        };
+      }
     }
 
     // 0b. Direct lookup in WorkplaceMemberModel for exact invitation code or hash
