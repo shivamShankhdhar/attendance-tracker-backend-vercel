@@ -10,6 +10,7 @@ export interface IWorkplaceMember extends Document {
   invitedEmail?: string;
   pinHash?: string;
   status: 'INVITED' | 'ACTIVE' | 'INACTIVE';
+  teamId?: Types.ObjectId;
   invitationCode?: string;
   invitationTokenHash?: string;
   invitationExpiresAt?: Date;
@@ -24,6 +25,7 @@ const workplaceMemberSchema = new Schema<IWorkplaceMember>(
   {
     workplaceId: { type: Schema.Types.ObjectId, ref: 'Workplace', required: true, index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    teamId: { type: Schema.Types.ObjectId, ref: 'Team', index: true },
     role: { type: String, enum: ['EMPLOYER', 'EMPLOYEE'], required: true },
     name: { type: String, required: true, trim: true },
     employeeCode: { type: String, trim: true, uppercase: true },

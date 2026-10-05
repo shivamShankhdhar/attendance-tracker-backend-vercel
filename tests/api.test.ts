@@ -475,14 +475,13 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(unavailableDetails.status, 403);
 
     const shareableJoinLink = joinQrRes.body.data.joinLink;
-    const workplaceCode = workplaceId.slice(-6).toUpperCase();
 
     const landing = await makeRequest('/api/v1/workplaces/join-landing', {
       method: 'POST', body: { token: shareableJoinLink },
     });
     assert.equal(landing.status, 200);
     assert.equal(landing.body.data.workplaceId, workplaceId);
-    assert.equal(landing.body.data.workplaceCode, workplaceCode);
+    assert.match(landing.body.data.workplaceCode, /^BWP-\d{4}-\d{3}$/);
     assert.equal(landing.body.data.ownerName, undefined);
     assert.equal(landing.body.data.pendingRequest, undefined);
     const invalidLanding = await makeRequest('/api/v1/workplaces/join-landing', {

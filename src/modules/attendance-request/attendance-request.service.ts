@@ -10,11 +10,26 @@ import { hashToken, generateSecureToken, encryptToken } from '../../utils/crypto
 import { getWorkplaceLocalDate } from '../../utils/date';
 import { AppError } from '../../middleware/errorHandler';
 
+function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3; // Earth radius in meters
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
 export class AttendanceRequestService {
   /**
-   * Employee submits attendance request from QR scan or direct check-in request
+   * Employee submits attendance request from QR scan, geolocation, or direct request
    */
-  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'DIRECT' | 'MANUAL'; note?: string; requestType?: 'CHECK_IN' | 'CHECK_OUT' }) {
+  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'DIRECT' | 'MANUAL' | 'GEOFENCE'; note?: string; requestType?: 'CHECK_IN' | 'CHECK_OUT'; latitude?: number; longitude?: number; accuracy?: number }) {
     let session: any = null;
     let workplace: any = null;
     let todayDate: string = '';
@@ -188,11 +203,47 @@ export class AttendanceRequestService {
       wifiVerified = workplace.wifiSsid.trim().toLowerCase() === data.deviceSsid.trim().toLowerCase();
     }
 
+    // ── Geolocation Verification ──────────────────────────────────────────────
+    const wpSettings = workplace.attendanceSettings || {};
+    const wpLat: number | undefined = wpSettings.latitude ?? (workplace as any).latitude;
+    const wpLng: number | undefined = wpSettings.longitude ?? (workplace as any).longitude;
+    const wpRadius: number = wpSettings.geofenceRadius ?? (workplace as any).geofenceRadius ?? 100;
+    const requireGeofence: boolean = Boolean(wpSettings.requireGeofence);
+
+    let geofenceVerified: boolean | null = null;
+    let distanceMeters: number | undefined = undefined;
+
+    if (data.latitude != null && data.longitude != null && wpLat != null && wpLng != null) {
+      distanceMeters = Math.round(calculateDistanceMeters(data.latitude, data.longitude, wpLat, wpLng));
+      geofenceVerified = distanceMeters <= wpRadius;
+    }
+
+    // If geofence is strictly enforced by the workplace, validate employee coordinates:
+    if (requireGeofence && !data.qrToken) {
+      if (data.latitude == null || data.longitude == null) {
+        throw new AppError(
+          'This workplace requires location verification to mark attendance. Please enable location permissions.',
+          400,
+          'LOCATION_REQUIRED'
+        );
+      }
+      if (geofenceVerified !== true) {
+        throw new AppError(
+          `You are outside the workplace geofence (${distanceMeters ?? '?'}m away). You must be within ${wpRadius}m of the workplace.`,
+          400,
+          'OUTSIDE_GEOFENCE'
+        );
+      }
+    }
+
     const requestedAt = new Date();
     const qrVerified = Boolean(data.qrToken);
+    // Auto-approve if QR was scanned OR if employee's geolocation is within the workplace geofence!
+    const isAutoApproved = qrVerified || (geofenceVerified === true);
 
-    // ── QR SCAN → AUTO-APPROVE (no employer action needed) ─────────────────────
-    if (qrVerified) {
+    // ── AUTO-APPROVE (QR Scan OR Geolocation match → No employer action needed) ───
+    if (isAutoApproved) {
+      const source = geofenceVerified ? 'GEOFENCE' : 'QR_SCAN';
       const request = await AttendanceRequestModel.create({
         workplaceId: workplace._id,
         attendanceSessionId: session._id,
@@ -201,7 +252,13 @@ export class AttendanceRequestService {
         attendanceDate: todayDate,
         requestedAt,
         requestType,
-        verification: { qrVerified: true, wifiVerified, deviceSsid: data.deviceSsid },
+        verification: {
+          qrVerified,
+          wifiVerified,
+          geofenceVerified,
+          distanceMeters,
+          deviceSsid: data.deviceSsid,
+        },
         status: 'APPROVED',
         reviewedAt: requestedAt,
       });
@@ -224,9 +281,14 @@ export class AttendanceRequestService {
               status: 'PRESENT',
               checkInTime: requestedAt,
               approvedAt: requestedAt,
-              source: 'QR_SCAN',
+              source,
               attendanceRequestId: request._id,
-              verification: { qr: true, wifi: wifiVerified },
+              verification: {
+                qr: qrVerified,
+                wifi: wifiVerified,
+                geofence: geofenceVerified,
+                distanceMeters,
+              },
             },
           },
           { upsert: true, new: true }
@@ -236,26 +298,35 @@ export class AttendanceRequestService {
       await AuditLogModel.create({
         workplaceId: workplace._id,
         actorId: new Types.ObjectId(userId),
-        action: requestType === 'CHECK_OUT' ? 'ATTENDANCE_CHECKOUT_AUTO_APPROVED' : 'ATTENDANCE_AUTO_APPROVED',
+        action: 'ATTENDANCE_APPROVED',
         entityId: request._id.toString(),
-        metadata: { attendanceDate: todayDate, source: 'QR_SCAN' },
+        metadata: {
+          attendanceDate: todayDate,
+          source,
+          distanceMeters,
+          geofenceVerified,
+        },
       });
 
       await NotificationOutboxModel.create({
-        eventId: `qr_auto_${request._id.toString()}_${Date.now()}`,
+        eventId: `auto_${request._id.toString()}_${Date.now()}`,
         recipientId: new Types.ObjectId(userId),
         workplaceId: workplace._id,
         kind: requestType === 'CHECK_OUT' ? 'CHECK_OUT_APPROVED' : 'ATTENDANCE_APPROVED',
         title: requestType === 'CHECK_OUT' ? 'Check-Out Confirmed!' : 'Attendance Confirmed!',
         body:
           requestType === 'CHECK_OUT'
-            ? `Your check-out for ${todayDate} was recorded via QR scan.`
-            : `Your attendance for ${todayDate} was recorded via QR scan.`,
+            ? `Your check-out for ${todayDate} was recorded via ${geofenceVerified ? 'workplace geolocation' : 'QR scan'}.`
+            : `Your attendance for ${todayDate} was recorded via ${geofenceVerified ? 'workplace geolocation' : 'QR scan'}.`,
         data: { requestId: request._id.toString(), requestType, attendanceDate: todayDate },
         status: 'PENDING',
         attempts: 0,
         nextAttemptAt: new Date(),
       });
+
+      const successMsg = requestType === 'CHECK_OUT'
+        ? (geofenceVerified ? 'Check-out recorded! Geolocation verified at workplace.' : 'Check-out recorded! QR scan verified.')
+        : (geofenceVerified ? 'Attendance recorded! Geolocation verified at workplace.' : 'Attendance recorded! QR scan verified.');
 
       return {
         request: {
@@ -267,12 +338,13 @@ export class AttendanceRequestService {
           verification: request.verification,
           requestType: request.requestType,
           autoApproved: true,
+          geofenceVerified: Boolean(geofenceVerified),
+          distanceMeters,
         },
         autoApproved: true,
-        message:
-          requestType === 'CHECK_OUT'
-            ? 'Check-out recorded! QR scan verified.'
-            : 'Attendance recorded! QR scan verified.',
+        geofenceVerified: Boolean(geofenceVerified),
+        distanceMeters,
+        message: successMsg,
       };
     }
 
@@ -285,7 +357,13 @@ export class AttendanceRequestService {
       attendanceDate: todayDate,
       requestedAt,
       requestType,
-      verification: { qrVerified, wifiVerified, deviceSsid: data.deviceSsid },
+      verification: {
+        qrVerified,
+        wifiVerified,
+        geofenceVerified,
+        distanceMeters,
+        deviceSsid: data.deviceSsid,
+      },
       status: 'PENDING',
     });
 
@@ -317,7 +395,11 @@ export class AttendanceRequestService {
         requestedAt: request.requestedAt,
         verification: request.verification,
         requestType: request.requestType,
+        geofenceVerified: Boolean(geofenceVerified),
+        distanceMeters,
       },
+      geofenceVerified: Boolean(geofenceVerified),
+      distanceMeters,
       message:
         requestType === 'CHECK_OUT'
           ? 'Check-out requested! Waiting for your employer to approve.'

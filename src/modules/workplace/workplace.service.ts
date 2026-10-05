@@ -5,15 +5,40 @@ import { NotificationOutboxModel } from '../notification/notification.model';
 import { Types, connection } from 'mongoose';
 import { WorkplaceModel } from './workplace.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
+import { TeamModel } from '../team/team.model';
 import { WorkplaceJoinRequestModel } from './workplace-join-request.model';
 import { UserModel } from '../auth/user.model';
 import { AuditLogModel } from '../audit/audit.model';
 import { AppError } from '../../middleware/errorHandler';
 import { decryptToken, generateSecureToken, hashToken } from '../../utils/crypto';
 
+/**
+ * Generate cryptographically unique Workplace ID in strict BWP-****-*** format (e.g. BWP-1234-567)
+ */
+export function generateWorkplaceCode(): string {
+  const segment1 = Math.floor(1000 + crypto.randomInt(9000)).toString();
+  const segment2 = Math.floor(100 + crypto.randomInt(900)).toString();
+  return `BWP-${segment1}-${segment2}`;
+}
+
+export function formatWorkplaceCode(wp: { workplaceCode?: string; _id?: any }): string {
+  if (wp.workplaceCode && /^BWP-\d{4}-\d{3}$/.test(wp.workplaceCode)) {
+    return wp.workplaceCode;
+  }
+  if (wp.workplaceCode) {
+    return wp.workplaceCode;
+  }
+  const idStr = wp._id ? wp._id.toString() : '';
+  const hash = crypto.createHash('sha256').update(idStr).digest('hex');
+  const num1 = ((parseInt(hash.slice(0, 8), 16) % 9000) + 1000).toString();
+  const num2 = ((parseInt(hash.slice(8, 16), 16) % 900) + 100).toString();
+  return `BWP-${num1}-${num2}`;
+}
+
 export class WorkplaceService {
   /**
-   * Employer onboarding: creates a new workplace and sets the creator as EMPLOYER
+   * Employer onboarding: creates a new workplace, generates BWP-****-*** code, sets the creator as EMPLOYER,
+   * and auto-creates the default "General" team for Workplace -> Team -> Team Members hierarchy.
    */
   async createWorkplace(ownerId: string, data: {
     name: string;
@@ -28,8 +53,23 @@ export class WorkplaceService {
       throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
     }
 
+    // Generate unique BWP-****-*** code
+    let workplaceCode = generateWorkplaceCode();
+    let isUnique = false;
+    let attempts = 0;
+    while (!isUnique && attempts < 25) {
+      attempts++;
+      const existing = await WorkplaceModel.findOne({ workplaceCode });
+      if (!existing) {
+        isUnique = true;
+      } else {
+        workplaceCode = generateWorkplaceCode();
+      }
+    }
+
     const workplace = await WorkplaceModel.create({
       name: data.name.trim(),
+      workplaceCode,
       ownerId: user._id,
       timezone: data.timezone || 'Asia/Kolkata',
       address: data.address?.trim(),
@@ -39,10 +79,20 @@ export class WorkplaceService {
       status: 'ACTIVE',
     });
 
-    // Atomically create EMPLOYER membership
+    // Auto-create initial default Team for hierarchy
+    const defaultTeam = await TeamModel.create({
+      workplaceId: workplace._id,
+      name: 'General',
+      description: 'Default team',
+      color: '#5B692D',
+      isDefault: true,
+    });
+
+    // Atomically create EMPLOYER membership assigned to default team
     const member = await WorkplaceMemberModel.create({
       workplaceId: workplace._id,
       userId: user._id,
+      teamId: defaultTeam._id,
       role: 'EMPLOYER',
       name: user.name,
       status: 'ACTIVE',
@@ -52,6 +102,7 @@ export class WorkplaceService {
     return {
       workplace,
       member,
+      team: defaultTeam,
     };
   }
 
@@ -83,7 +134,7 @@ export class WorkplaceService {
         return {
           id: wpIdStr,
           name: wp.name,
-          code: wpIdStr.slice(-6).toUpperCase(),
+          code: formatWorkplaceCode(wp),
           timezone: wp.timezone,
           address: wp.address,
           wifiSsid: wp.wifiSsid,
@@ -110,7 +161,7 @@ export class WorkplaceService {
     return {
       id: workplace._id.toString(),
       name: workplace.name,
-      code: workplace._id.toString().slice(-6).toUpperCase(),
+      code: formatWorkplaceCode(workplace),
       address: workplace.address,
       timezone: workplace.timezone,
       memberCount,
@@ -521,7 +572,7 @@ export class WorkplaceService {
     const baseResult: any = {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
-      workplaceCode: workplace._id.toString().slice(-6).toUpperCase(),
+      workplaceCode: formatWorkplaceCode(workplace),
       address: workplace.address,
       description: workplace.description,
       installLink,
@@ -623,7 +674,7 @@ export class WorkplaceService {
     return {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
-      workplaceCode: workplace._id.toString().slice(-6).toUpperCase(),
+      workplaceCode: formatWorkplaceCode(workplace),
       address: workplace.address,
       description: workplace.description,
       timezone: workplace.timezone,

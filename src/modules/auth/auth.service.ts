@@ -5,6 +5,7 @@ import { UserModel, IUser } from './user.model';
 import { MpinOtpModel } from './mpin-otp.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
+import { formatWorkplaceCode } from '../workplace/workplace.service';
 import { WorkplaceJoinRequestModel } from '../workplace/workplace-join-request.model';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { verifyPin, hashPin } from '../../utils/crypto';
@@ -427,7 +428,7 @@ export class AuthService {
       status: { $in: ['ACTIVE', 'INVITED'] },
     }).populate({
       path: 'workplaceId',
-      select: 'name timezone address wifiSsid status createdAt ownerId attendanceSettings',
+      select: 'name workplaceCode timezone address wifiSsid status createdAt ownerId attendanceSettings',
       populate: { path: 'ownerId', select: 'name email' },
     });
 
@@ -441,7 +442,7 @@ export class AuthService {
         id: m._id.toString(),
         workplaceId: wpId,
         workplaceName: wp?.name || 'Workplace',
-        workplaceCode: wpId ? wpId.slice(-6).toUpperCase() : undefined,
+        workplaceCode: wp ? formatWorkplaceCode(wp) : (wpId ? `BWP-${wpId.slice(-4)}-${wpId.slice(-7, -4)}` : undefined),
         adminName,
         address: wp?.address,
         timezone: wp?.timezone || 'Asia/Kolkata',

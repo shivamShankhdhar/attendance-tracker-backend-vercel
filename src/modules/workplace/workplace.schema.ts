@@ -18,6 +18,10 @@ export const createWorkplaceSchema = z.object({
       requireWifi: z.boolean().default(false),
       autoCloseHour: z.number().min(0).max(23).default(23),
       allowEmployeeViewHistory: z.boolean().default(true).optional(),
+      requireGeofence: z.boolean().default(false).optional(),
+      latitude: z.number().min(-90).max(90).optional(),
+      longitude: z.number().min(-180).max(180).optional(),
+      geofenceRadius: z.number().min(10).max(10000).default(100).optional(),
     })
     .optional(),
 });

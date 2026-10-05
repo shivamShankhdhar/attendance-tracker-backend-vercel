@@ -15,6 +15,8 @@ export interface IAttendanceRequest extends Document {
   verification: {
     qrVerified: boolean;
     wifiVerified: boolean | null;
+    geofenceVerified?: boolean | null;
+    distanceMeters?: number;
     deviceSsid?: string;
   };
   status: RequestStatus;
@@ -41,8 +43,10 @@ const attendanceRequestSchema = new Schema<IAttendanceRequest>(
       index: true,
     },
     verification: {
-      qrVerified: { type: Boolean, default: true, required: true },
+      qrVerified: { type: Boolean, default: false },
       wifiVerified: { type: Boolean, default: null },
+      geofenceVerified: { type: Boolean, default: null },
+      distanceMeters: { type: Number },
       deviceSsid: { type: String },
     },
     status: {

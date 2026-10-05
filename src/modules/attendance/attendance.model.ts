@@ -1,7 +1,7 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
 export type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'HALF_DAY' | 'LEAVE';
-export type AttendanceSource = 'QR_REQUEST' | 'MANUAL';
+export type AttendanceSource = 'QR_REQUEST' | 'QR_SCAN' | 'MANUAL' | 'GEOFENCE';
 
 export interface IAttendance extends Document {
   _id: Types.ObjectId;
@@ -19,6 +19,8 @@ export interface IAttendance extends Document {
   verification: {
     qr: boolean;
     wifi: boolean | null;
+    geofence?: boolean | null;
+    distanceMeters?: number;
   };
   correctionReason?: string;
   createdAt: Date;
@@ -44,7 +46,7 @@ const attendanceSchema = new Schema<IAttendance>(
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     source: {
       type: String,
-      enum: ['QR_REQUEST', 'MANUAL'],
+      enum: ['QR_REQUEST', 'QR_SCAN', 'MANUAL', 'GEOFENCE'],
       default: 'QR_REQUEST',
       required: true,
     },
@@ -52,6 +54,8 @@ const attendanceSchema = new Schema<IAttendance>(
     verification: {
       qr: { type: Boolean, default: false },
       wifi: { type: Boolean, default: null },
+      geofence: { type: Boolean, default: null },
+      distanceMeters: { type: Number },
     },
     correctionReason: { type: String, trim: true },
   },

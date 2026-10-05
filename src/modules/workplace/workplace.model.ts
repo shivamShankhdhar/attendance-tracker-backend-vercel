@@ -3,6 +3,7 @@ import { Schema, model, Document, Types } from 'mongoose';
 export interface IWorkplace extends Document {
   _id: Types.ObjectId;
   name: string;
+  workplaceCode?: string;
   ownerId: Types.ObjectId;
   timezone: string;
   address?: string;
@@ -15,6 +16,10 @@ export interface IWorkplace extends Document {
     requireWifi: boolean;
     autoCloseHour: number;
     allowEmployeeViewHistory?: boolean;
+    requireGeofence?: boolean;
+    latitude?: number;
+    longitude?: number;
+    geofenceRadius?: number;
   };
   status: 'ACTIVE' | 'INACTIVE';
   joinQrSecret?: string;
@@ -26,6 +31,7 @@ export interface IWorkplace extends Document {
 const workplaceSchema = new Schema<IWorkplace>(
   {
     name: { type: String, required: true, trim: true },
+    workplaceCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true, index: true },
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     timezone: { type: String, default: 'Asia/Kolkata', required: true },
     address: { type: String, trim: true },
@@ -38,6 +44,10 @@ const workplaceSchema = new Schema<IWorkplace>(
       requireWifi: { type: Boolean, default: false },
       autoCloseHour: { type: Number, default: 23 },
       allowEmployeeViewHistory: { type: Boolean, default: true },
+      requireGeofence: { type: Boolean, default: false },
+      latitude: { type: Number },
+      longitude: { type: Number },
+      geofenceRadius: { type: Number, default: 100 },
     },
     joinQrSecret: { type: String },
     joinQrEnabled: { type: Boolean, default: true },

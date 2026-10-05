@@ -1,6 +1,9 @@
 import { Types } from 'mongoose';
 import { WorkplaceMemberModel, IWorkplaceMember } from './workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
+import { TeamModel } from '../team/team.model';
+import { teamService } from '../team/team.service';
+import { formatWorkplaceCode } from '../workplace/workplace.service';
 import { UserModel } from '../auth/user.model';
 import { AuditLogModel } from '../audit/audit.model';
 import { hashPin, generateSecureToken, hashToken } from '../../utils/crypto';
@@ -10,7 +13,7 @@ import { env } from '../../config/env';
 
 export class EmployeeService {
   /**
-   * List all employees in a workplace (active, invited, inactive)
+   * List all employees in a workplace (active, invited, inactive) with team information
    */
   async getEmployees(workplaceId: string) {
     const employees = await WorkplaceMemberModel.find({
@@ -18,6 +21,7 @@ export class EmployeeService {
       role: 'EMPLOYEE',
     })
       .populate('userId', 'avatarUrl email')
+      .populate('teamId', 'name color')
       .sort({ createdAt: -1 });
 
     return employees.map((emp: any) => ({
@@ -25,6 +29,8 @@ export class EmployeeService {
       name: emp.name,
       employeeCode: emp.employeeCode,
       invitedEmail: emp.invitedEmail || emp.userId?.email || undefined,
+      teamId: emp.teamId?._id?.toString() || (emp.teamId ? emp.teamId.toString() : undefined),
+      teamName: emp.teamId?.name || undefined,
       status: emp.status,
       hasPin: Boolean(emp.pinHash),
       avatarUrl: emp.userId?.avatarUrl || undefined,
@@ -44,6 +50,7 @@ export class EmployeeService {
       email?: string;
       employeeCode?: string;
       pin?: string;
+      teamId?: string;
     }
   ) {
     const normEmail = data.email ? data.email.trim().toLowerCase() : undefined;
@@ -58,6 +65,22 @@ export class EmployeeService {
       if (existing) {
         throw new AppError('An employee with this email is already added to this workplace', 409, 'DUPLICATE_EMAIL');
       }
+    }
+
+    // Resolve or assign team (Hierarchy: Workplace -> Team -> Team Members)
+    let assignedTeamId: Types.ObjectId;
+    if (data.teamId) {
+      const team = await TeamModel.findOne({
+        _id: new Types.ObjectId(data.teamId),
+        workplaceId: new Types.ObjectId(workplaceId),
+      });
+      if (!team) {
+        throw new AppError('Selected team does not exist in this workplace', 404, 'TEAM_NOT_FOUND');
+      }
+      assignedTeamId = team._id;
+    } else {
+      const defaultTeam = await teamService.ensureDefaultTeam(workplaceId);
+      assignedTeamId = defaultTeam._id;
     }
 
     // Generate or validate employee code
@@ -102,6 +125,7 @@ export class EmployeeService {
       _id: memberId,
       workplaceId: new Types.ObjectId(workplaceId),
       userId: existingUser ? existingUser._id : undefined,
+      teamId: assignedTeamId,
       role: 'EMPLOYEE',
       name: memberName,
       employeeCode: code,
@@ -119,7 +143,7 @@ export class EmployeeService {
       actorId: new Types.ObjectId(actorId),
       action: 'EMPLOYEE_CREATED',
       entityId: member._id.toString(),
-      metadata: { employeeCode: code, email: normEmail },
+      metadata: { employeeCode: code, email: normEmail, teamId: assignedTeamId.toString() },
     });
 
     // Generate workplace join link and dispatch invitation email if email is provided
@@ -135,7 +159,7 @@ export class EmployeeService {
         if (normEmail) {
           const actor = await UserModel.findById(actorId);
           const adminName = actor?.name || 'Workplace Admin';
-          const workplaceCode = workplace._id.toString().slice(-6).toUpperCase();
+          const workplaceCode = formatWorkplaceCode(workplace);
 
           await emailService.sendWorkplaceInvitationEmail({
             toEmail: normEmail,
@@ -173,7 +197,7 @@ export class EmployeeService {
     workplaceId: string,
     memberId: string,
     actorId: string,
-    data: { name?: string; employeeCode?: string; status?: 'ACTIVE' | 'INACTIVE' }
+    data: { name?: string; employeeCode?: string; status?: 'ACTIVE' | 'INACTIVE'; teamId?: string }
   ) {
     const member = await WorkplaceMemberModel.findOne({
       _id: new Types.ObjectId(memberId),
@@ -187,6 +211,16 @@ export class EmployeeService {
 
     if (data.name) member.name = data.name.trim();
     if (data.employeeCode) member.employeeCode = data.employeeCode.trim().toUpperCase();
+    if (data.teamId) {
+      const team = await TeamModel.findOne({
+        _id: new Types.ObjectId(data.teamId),
+        workplaceId: new Types.ObjectId(workplaceId),
+      });
+      if (!team) {
+        throw new AppError('Selected team does not exist in this workplace', 404, 'TEAM_NOT_FOUND');
+      }
+      member.teamId = team._id;
+    }
 
     if (data.status && data.status !== member.status) {
       member.status = data.status;

@@ -9,6 +9,7 @@ import { attendanceSessionRouter } from './modules/attendance-session/attendance
 import { attendanceRequestRouter } from './modules/attendance-request/attendance-request.routes';
 import { attendanceRouter } from './modules/attendance/attendance.routes';
 import { notificationRouter } from './modules/notification/notification.routes';
+import { teamRouter } from './modules/team/team.routes';
 import { env } from './config/env';
 
 export const app: Express = express();
@@ -58,6 +59,8 @@ apiV1.use('/workplaces', attendanceRequestRouter);
 apiV1.use('/workplace', attendanceRequestRouter);
 apiV1.use('/workplaces', attendanceRouter);
 apiV1.use('/workplace', attendanceRouter);
+apiV1.use('/workplaces', teamRouter);
+apiV1.use('/workplace', teamRouter);
 apiV1.use('/', notificationRouter);
 
 app.use('/api/v1', apiV1);
