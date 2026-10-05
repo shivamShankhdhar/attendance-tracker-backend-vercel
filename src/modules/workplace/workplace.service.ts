@@ -252,7 +252,7 @@ export class WorkplaceService {
   private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean }> {
     let tokenStr = rawInput.trim();
     // Handle surrounding quotes
-    tokenStr = tokenStr.replace(/^["']|["']$/g, '').trim();
+    tokenStr = tokenStr.replace(/^["']|["']$/g, '').replace(/^#/, '').trim();
 
     // Handle custom app schemes like bizora://join/509e-250a8 or bizora://join?token=...
     if (tokenStr.startsWith('bizora://')) {
@@ -267,17 +267,18 @@ export class WorkplaceService {
       try {
         const normalized = tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
         const url = new URL(normalized);
-        const qToken = url.searchParams.get('token') || url.searchParams.get('code') || url.searchParams.get('teamCode') || url.searchParams.get('invite') || url.searchParams.get('team');
+        const qToken = url.searchParams.get('teamCode') || url.searchParams.get('team') || url.searchParams.get('token') || url.searchParams.get('code') || url.searchParams.get('invite');
         if (qToken) tokenStr = qToken;
       } catch {
-        const match = tokenStr.match(/(?:token|code|teamCode|invite|team)=([^&]+)/);
+        const match = tokenStr.match(/(?:teamCode|team|token|code|invite)=([^&]+)/);
         if (match) tokenStr = decodeURIComponent(match[1]);
       }
     } else if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
       try {
         const parsed = JSON.parse(tokenStr);
-        if (parsed.token) tokenStr = parsed.token;
         if (parsed.teamCode) tokenStr = parsed.teamCode;
+        else if (parsed.token) tokenStr = parsed.token;
+        else if (parsed.code) tokenStr = parsed.code;
       } catch {
         // Continue with raw string
       }
@@ -305,7 +306,13 @@ export class WorkplaceService {
     }
 
     // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode
-    const teamMatch = await TeamModel.findOne({ teamCode: tokenStr.toUpperCase() });
+    const cleanTeamLookup = tokenStr.replace(/^#/, '').toUpperCase();
+    const teamMatch = await TeamModel.findOne({
+      $or: [
+        { teamCode: cleanTeamLookup },
+        { _id: Types.ObjectId.isValid(tokenStr) ? tokenStr : undefined }
+      ].filter(Boolean)
+    });
     if (teamMatch) {
       const wp = await WorkplaceModel.findById(teamMatch.workplaceId);
       if (wp && wp.status === 'ACTIVE') {

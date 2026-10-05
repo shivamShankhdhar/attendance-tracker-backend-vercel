@@ -66,6 +66,20 @@ export class EmployeeController {
       next(error);
     }
   }
+
+  async deleteEmployee(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const result = await employeeService.deleteEmployee(
+        getParam(req, 'workplaceId'),
+        getParam(req, 'memberId'),
+        req.user.userId
+      );
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const employeeController = new EmployeeController();

@@ -389,6 +389,41 @@ export class EmployeeService {
       name: member.name,
     };
   }
+
+  /**
+   * Delete an employee membership from a workplace
+   */
+  async deleteEmployee(workplaceId: string, memberId: string, actorId: string) {
+    const member = await WorkplaceMemberModel.findOne({
+      _id: new Types.ObjectId(memberId),
+      workplaceId: new Types.ObjectId(workplaceId),
+    });
+
+    if (!member) {
+      throw new AppError('Employee not found in this workplace', 404, 'EMPLOYEE_NOT_FOUND');
+    }
+
+    if (member.role === 'EMPLOYER') {
+      throw new AppError('Cannot delete workplace employer', 400, 'CANNOT_DELETE_EMPLOYER');
+    }
+
+    await WorkplaceMemberModel.deleteOne({ _id: member._id });
+
+    // Decrement team member count if assigned to a team
+    if (member.teamId) {
+      await TeamModel.findByIdAndUpdate(member.teamId, { $inc: { memberCount: -1 } });
+    }
+
+    await AuditLogModel.create({
+      workplaceId: new Types.ObjectId(workplaceId),
+      actorId: new Types.ObjectId(actorId),
+      action: 'EMPLOYEE_DELETED',
+      entityId: member._id.toString(),
+      metadata: { employeeName: member.name, employeeCode: member.employeeCode },
+    });
+
+    return { success: true, message: 'Employee deleted successfully' };
+  }
 }
 
 export const employeeService = new EmployeeService();

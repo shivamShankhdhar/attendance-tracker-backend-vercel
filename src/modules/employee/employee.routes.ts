@@ -52,3 +52,10 @@ employeeRouter.post(
   validateRequest({ body: resetPinSchema }),
   employeeController.resetPin
 );
+
+employeeRouter.delete(
+  '/:workplaceId/employees/:memberId',
+  requireWorkplaceMember(),
+  requireWorkplaceRole(['EMPLOYER']),
+  employeeController.deleteEmployee
+);
