@@ -157,6 +157,17 @@ export class AuthController {
     }
   }
 
+  async setAppLock(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { enabled } = req.body;
+      const data = await authService.setAppLock(req.user.userId, enabled);
+      res.status(200).json({ success: true, message: 'App lock preference updated', data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getMpinStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');

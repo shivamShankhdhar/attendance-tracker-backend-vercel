@@ -62,3 +62,7 @@ export const mpinBiometricSchema = z.object({
   enabled: z.boolean(),
 });
 
+export const appLockToggleSchema = z.object({
+  enabled: z.boolean(),
+});
+

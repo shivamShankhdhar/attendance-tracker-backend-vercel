@@ -475,6 +475,7 @@ export class AuthService {
         avatarUrl: user.avatarUrl,
         status: user.status,
         hasMpin: Boolean(user.hasMpin || user.mpinHash),
+        appLockEnabled: Boolean(user.appLockEnabled ?? (user.hasMpin || user.mpinHash)),
         biometricEnabled: Boolean(user.biometricEnabled),
       },
       memberships: mappedMemberships,
@@ -499,7 +500,7 @@ export class AuthService {
       _id: user._id,
       $or: [{ mpinLockedUntil: null }, { mpinLockedUntil: { $lte: new Date() } }],
     }, {
-      $set: { mpinHash: hashed, hasMpin: true, mpinFailedAttempts: 0, mpinLockedUntil: null,
+      $set: { mpinHash: hashed, hasMpin: true, appLockEnabled: true, mpinFailedAttempts: 0, mpinLockedUntil: null,
         ...(typeof enableBiometric === 'boolean' ? { biometricEnabled: enableBiometric } : {}) },
       $inc: { mpinAttemptVersion: 1 },
     }, { new: true });
@@ -509,6 +510,7 @@ export class AuthService {
 
     return {
       hasMpin: true,
+      appLockEnabled: true,
       biometricEnabled: Boolean(updated.biometricEnabled),
     };
   }
@@ -761,6 +763,7 @@ export class AuthService {
       $set: {
         mpinHash: hashed,
         hasMpin: true,
+        appLockEnabled: true,
         mpinFailedAttempts: 0,
         mpinLockedUntil: null,
         ...(typeof enableBiometric === 'boolean' ? { biometricEnabled: enableBiometric } : {}),
@@ -770,6 +773,7 @@ export class AuthService {
 
     return {
       hasMpin: true,
+      appLockEnabled: true,
       biometricEnabled: Boolean(updated?.biometricEnabled),
       message: 'MPIN reset successfully',
     };
@@ -830,6 +834,26 @@ export class AuthService {
 
     return {
       hasMpin: Boolean(user.hasMpin || user.mpinHash),
+      appLockEnabled: Boolean(user.appLockEnabled ?? (user.hasMpin || user.mpinHash)),
+      biometricEnabled: Boolean(user.biometricEnabled),
+    };
+  }
+
+  /**
+   * Enable/Disable master App Lock preference in DB
+   */
+  async setAppLock(userId: string, enabled: boolean) {
+    const user = await UserModel.findById(userId);
+    if (!user || user.status !== 'ACTIVE') {
+      throw new AppError('User not found or inactive', 404, 'USER_NOT_FOUND');
+    }
+
+    user.appLockEnabled = enabled;
+    await user.save();
+
+    return {
+      hasMpin: Boolean(user.hasMpin || user.mpinHash),
+      appLockEnabled: Boolean(user.appLockEnabled),
       biometricEnabled: Boolean(user.biometricEnabled),
     };
   }
@@ -853,6 +877,7 @@ export class AuthService {
       attemptsRemaining,
       lockedUntil: locked ? user.mpinLockedUntil?.toISOString() : null,
       hasMpin: Boolean(user.hasMpin || user.mpinHash),
+      appLockEnabled: Boolean(user.appLockEnabled ?? (user.hasMpin || user.mpinHash)),
       biometricEnabled: Boolean(user.biometricEnabled),
     };
   }

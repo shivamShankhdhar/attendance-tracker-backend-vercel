@@ -15,6 +15,7 @@ import {
   mpinOtpRequestSchema,
   mpinOtpVerifySchema,
   mpinBiometricSchema,
+  appLockToggleSchema,
 } from './auth.schema';
 
 export const authRouter = Router();
@@ -270,9 +271,24 @@ authRouter.post(
   authController.setBiometric
 );
 
+authRouter.post(
+  '/mpin/app-lock',
+  authenticate,
+  validateRequest({ body: appLockToggleSchema }),
+  authController.setAppLock
+);
+
+authRouter.patch(
+  '/mpin/app-lock',
+  authenticate,
+  validateRequest({ body: appLockToggleSchema }),
+  authController.setAppLock
+);
+
 authRouter.get(
   '/mpin/status',
   authenticate,
   authController.getMpinStatus
 );
+
 

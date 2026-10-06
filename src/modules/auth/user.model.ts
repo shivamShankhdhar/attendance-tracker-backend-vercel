@@ -15,6 +15,7 @@ export interface IUser extends Document {
   mpinLockedUntil?: Date | null;
   mpinAttemptVersion?: number;
   hasMpin?: boolean;
+  appLockEnabled?: boolean;
   biometricEnabled?: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -65,6 +66,10 @@ const userSchema = new Schema<IUser>(
     mpinLockedUntil: { type: Date, default: null },
     mpinAttemptVersion: { type: Number, default: 0 },
     hasMpin: {
+      type: Boolean,
+      default: false,
+    },
+    appLockEnabled: {
       type: Boolean,
       default: false,
     },
