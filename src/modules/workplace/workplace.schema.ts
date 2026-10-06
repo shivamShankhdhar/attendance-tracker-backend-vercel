@@ -13,6 +13,8 @@ export const createWorkplaceSchema = z.object({
   address: z.string().max(200).optional(),
   description: z.string().max(300).optional(),
   wifiSsid: z.string().max(60).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
   attendanceSettings: z
     .object({
       requireWifi: z.boolean().default(false),

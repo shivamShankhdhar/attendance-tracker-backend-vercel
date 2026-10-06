@@ -45,9 +45,19 @@ export class WorkplaceService {
     name: string;
     timezone?: string;
     address?: string;
+    latitude?: number;
+    longitude?: number;
     description?: string;
     wifiSsid?: string;
-    attendanceSettings?: { requireWifi: boolean; autoCloseHour: number };
+    attendanceSettings?: {
+      requireWifi?: boolean;
+      autoCloseHour?: number;
+      allowEmployeeViewHistory?: boolean;
+      requireGeofence?: boolean;
+      latitude?: number;
+      longitude?: number;
+      geofenceRadius?: number;
+    };
   }) {
     const user = await UserModel.findById(ownerId);
     if (!user || user.status !== 'ACTIVE') {
@@ -68,15 +78,29 @@ export class WorkplaceService {
       }
     }
 
+    const lat = data.latitude ?? data.attendanceSettings?.latitude;
+    const lng = data.longitude ?? data.attendanceSettings?.longitude;
+    const attSettings = {
+      requireWifi: data.attendanceSettings?.requireWifi ?? false,
+      autoCloseHour: data.attendanceSettings?.autoCloseHour ?? 23,
+      allowEmployeeViewHistory: data.attendanceSettings?.allowEmployeeViewHistory ?? true,
+      requireGeofence: data.attendanceSettings?.requireGeofence ?? (lat != null && lng != null),
+      latitude: lat,
+      longitude: lng,
+      geofenceRadius: data.attendanceSettings?.geofenceRadius ?? 100,
+    };
+
     const workplace = await WorkplaceModel.create({
       name: data.name.trim(),
       workplaceCode,
       ownerId: user._id,
       timezone: data.timezone || 'Asia/Kolkata',
       address: data.address?.trim(),
+      latitude: lat,
+      longitude: lng,
       description: data.description?.trim(),
       wifiSsid: data.wifiSsid?.trim(),
-      attendanceSettings: data.attendanceSettings || { requireWifi: false, autoCloseHour: 23 },
+      attendanceSettings: attSettings,
       status: 'ACTIVE',
     });
 

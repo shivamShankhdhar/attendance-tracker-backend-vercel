@@ -7,6 +7,8 @@ export interface IWorkplace extends Document {
   ownerId: Types.ObjectId;
   timezone: string;
   address?: string;
+  latitude?: number;
+  longitude?: number;
   description?: string;
   joinInviteToken?: string;
   previousJoinTokens?: string[];
@@ -35,6 +37,8 @@ const workplaceSchema = new Schema<IWorkplace>(
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     timezone: { type: String, default: 'Asia/Kolkata', required: true },
     address: { type: String, trim: true },
+    latitude: { type: Number },
+    longitude: { type: Number },
     description: { type: String, trim: true, maxlength: 300 },
     joinInviteToken: { type: String, unique: true, sparse: true },
     previousJoinTokens: [{ type: String }],
