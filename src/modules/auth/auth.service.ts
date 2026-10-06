@@ -161,11 +161,12 @@ export class AuthService {
       await user.save();
     }
 
-    // Auto-link any pending workplace memberships for this verified email (preserve INVITED status for Screen 4 onboarding)
+    // Auto-link and activate any email-invited workplace memberships for this verified email
+    // Inviting an employee via email requires no employer approval!
     if (email) {
       await WorkplaceMemberModel.updateMany(
-        { invitedEmail: email, status: 'INVITED' },
-        { $set: { userId: user._id } }
+        { invitedEmail: email.toLowerCase(), status: 'INVITED' },
+        { $set: { userId: user._id, status: 'ACTIVE', joinedAt: new Date() } }
       );
     }
 
