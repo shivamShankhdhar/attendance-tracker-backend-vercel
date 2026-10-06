@@ -16,10 +16,9 @@ import { emailService } from '../../services/email.service';
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!domain) return email;
-  if (local.length <= 2) return `${local[0]}***@${domain}`;
-  if (local.length <= 4) return `${local[0]}***${local.slice(-1)}@${domain}`;
-  if (local.length <= 7) return `${local.slice(0, 2)}***${local.slice(-2)}@${domain}`;
-  return `${local.slice(0, 4)}***${local.slice(-4)}@${domain}`;
+  const start = local.slice(0, 2);
+  const end = local.length > 2 ? local.slice(-1) : '';
+  return `${start}***${end}@${domain}`;
 }
 
 /**
