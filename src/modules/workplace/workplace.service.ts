@@ -566,9 +566,9 @@ export class WorkplaceService {
    * Preview workplace details before requesting to join (Employee side)
    */
   private async resolveJoinWorkplace(rawToken: string) {
-    const { workplaceId, secret, isCodeLookup } = await this.parseJoinToken(rawToken);
+    const { workplaceId, teamId, secret, isCodeLookup } = await this.parseJoinToken(rawToken);
 
-    const workplace = await WorkplaceModel.findById(workplaceId);
+    const workplace: any = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
       throw new AppError('This workplace is inactive or does not exist', 404, 'WORKPLACE_NOT_FOUND');
     }
@@ -579,6 +579,10 @@ export class WorkplaceService {
 
     if (!isCodeLookup && workplace.joinQrSecret && secret !== workplace.joinQrSecret) {
       throw new AppError('This invite link is expired or was rotated. Ask the employer for a new link.', 400, 'EXPIRED_QR');
+    }
+
+    if (teamId) {
+      workplace.targetTeamId = teamId;
     }
 
     return workplace;
@@ -696,10 +700,16 @@ export class WorkplaceService {
 
     const owner = await UserModel.findById(workplace.ownerId);
 
+    let targetTeam: any = null;
+    if ((workplace as any).targetTeamId) {
+      targetTeam = await TeamModel.findById((workplace as any).targetTeamId).select('name teamCode color');
+    }
+
     return {
       workplaceId: workplace._id.toString(),
       workplaceName: workplace.name,
       workplaceCode: formatWorkplaceCode(workplace),
+      targetTeam: targetTeam ? { id: targetTeam._id.toString(), name: targetTeam.name, teamCode: targetTeam.teamCode, color: targetTeam.color } : null,
       address: workplace.address,
       description: workplace.description,
       timezone: workplace.timezone,
@@ -842,11 +852,13 @@ export class WorkplaceService {
     }
 
     // The unique pending index prevents duplicate requests on rapid taps/retries.
+    const targetTeamId = (workplace as any).targetTeamId;
     let joinReq: any;
     try {
       joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' }, { $setOnInsert: {
         workplaceId: workplace._id,
         userId: user._id,
+        teamId: targetTeamId ? new Types.ObjectId(targetTeamId) : undefined,
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
@@ -994,11 +1006,15 @@ export class WorkplaceService {
         member.userId = joinReq.userId;
         member.name = joinReq.name;
         member.employeeCode = code;
+        if (joinReq.teamId && !member.teamId) {
+          member.teamId = joinReq.teamId;
+        }
         member.joinedAt = new Date();
         await member.save({ session });
       } else {
         [member] = await WorkplaceMemberModel.create([{ workplaceId, userId: joinReq.userId, role: 'EMPLOYEE',
           name: joinReq.name, ...(joinReq.email ? { invitedEmail: joinReq.email } : {}), employeeCode: code,
+          teamId: joinReq.teamId,
           status: 'ACTIVE', joinedAt: new Date() }], { session });
       }
       await NotificationOutboxModel.create([{ eventId: `join:${joinReq._id}:approved`, recipientId: joinReq.userId,

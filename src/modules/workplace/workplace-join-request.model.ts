@@ -6,6 +6,7 @@ export interface IWorkplaceJoinRequest extends Document {
   _id: Types.ObjectId;
   workplaceId: Types.ObjectId;
   userId: Types.ObjectId;
+  teamId?: Types.ObjectId;
   name: string;
   email?: string;
   employeeCode?: string;
@@ -23,6 +24,7 @@ const workplaceJoinRequestSchema = new Schema<IWorkplaceJoinRequest>(
   {
     workplaceId: { type: Schema.Types.ObjectId, ref: 'Workplace', required: true, index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    teamId: { type: Schema.Types.ObjectId, ref: 'Team', index: true },
     name: { type: String, required: true, trim: true },
     email: { type: String, trim: true, lowercase: true, default: '' },
     employeeCode: { type: String, trim: true, uppercase: true },
