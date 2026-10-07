@@ -16,7 +16,7 @@ const handler = async (req: any, res: any) => {
 
   const url = req.url || '';
 
-  if (url === '/' || url === '') {
+  if (url === '/' || url === '' || url === '/api' || url === '/api/') {
     return res.status(200).json({
       status: 'healthy',
       name: 'Bizora Attendance Tracker API',
