@@ -101,6 +101,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
   let employeeCode: string;
   let activeQrToken: string;
   let attendanceRequestId: string;
+  let workplaceCode: string;
 
   test('1. Health check returns healthy status', async () => {
     const res = await makeRequest('/health');
@@ -141,6 +142,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     assert.equal(wpRes.body.data.workplace.name, 'Test Workplace Central');
     assert.equal(wpRes.body.data.member.role, 'EMPLOYER');
     workplaceId = wpRes.body.data.workplace._id;
+    workplaceCode = wpRes.body.data.workplace.workplaceCode;
   });
 
   test('3. Employer adds an employee with email and PIN fallback', async () => {
@@ -580,7 +582,7 @@ describe('Attendance Management System — End-to-End API Suite', () => {
     });
     assert.equal(employeeDetails.status, 200);
     assert.equal(employeeDetails.body.data.name, 'Test Workplace Central');
-    assert.equal(employeeDetails.body.data.code, workplaceId.slice(-6).toUpperCase());
+    assert.equal(employeeDetails.body.data.code, workplaceCode);
     assert.ok(employeeDetails.body.data.memberCount >= 2);
     assert.equal(employeeDetails.body.data.joinQrSecret, undefined);
     assert.equal(employeeDetails.body.data.wifiSsid, undefined);
