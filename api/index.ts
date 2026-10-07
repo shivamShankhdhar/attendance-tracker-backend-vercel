@@ -46,10 +46,30 @@ const handler = async (req: any, res: any) => {
   }
 
   return new Promise<void>((resolve, reject) => {
-    res.on('finish', resolve);
-    res.on('close', resolve);
-    res.on('error', reject);
-    app(req, res);
+    let resolved = false;
+    const finish = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve();
+      }
+    };
+    res.on('finish', finish);
+    res.on('close', finish);
+    res.on('error', (err: any) => {
+      if (!resolved) {
+        resolved = true;
+        reject(err);
+      }
+    });
+
+    try {
+      app(req, res);
+    } catch (err) {
+      if (!resolved) {
+        resolved = true;
+        reject(err);
+      }
+    }
   });
 };
 

@@ -25,25 +25,21 @@ let envData: z.infer<typeof envSchema>;
 
 if (!parsedEnv.success) {
   const missingKeys = Object.keys(parsedEnv.error.format()).filter((k) => k !== '_errors');
-  console.error('[Config Error] Missing environment variables:', missingKeys);
-  if (process.env.VERCEL || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'test') {
-    envData = {
-      PORT: Number(process.env.PORT) || 5001,
-      NODE_ENV: (process.env.NODE_ENV as any) || 'production',
-      MONGODB_URI: process.env.MONGODB_URI || '',
-      JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
-      JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
-      JWT_ACCESS_EXPIRY: '15m',
-      JWT_REFRESH_EXPIRY: '7d',
-      QR_ENCRYPTION_KEY: process.env.QR_ENCRYPTION_KEY || 'fallback_dummy_key_for_diagnostics_32_bytes_hex_val',
-      GOOGLE_CLIENT_IDS: process.env.GOOGLE_CLIENT_IDS || '',
-      RETRY_SECRET: process.env.RETRY_SECRET || 'dev_retry_secret',
-      APP_NAME: process.env.APP_NAME || 'Bizora',
-      WORKPLACE_JOIN_URL: process.env.WORKPLACE_JOIN_URL || 'https://www.bizora.shivamshankhdhar.online/join',
-    };
-  } else {
-    process.exit(1);
-  }
+  console.warn('[Config Warning] Missing or invalid environment variables:', missingKeys, 'Using safe fallbacks.');
+  envData = {
+    PORT: Number(process.env.PORT) || 5001,
+    NODE_ENV: (process.env.NODE_ENV as any) || 'development',
+    MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/attendance-tracker',
+    JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
+    JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
+    JWT_ACCESS_EXPIRY: process.env.JWT_ACCESS_EXPIRY || '15m',
+    JWT_REFRESH_EXPIRY: process.env.JWT_REFRESH_EXPIRY || '7d',
+    QR_ENCRYPTION_KEY: process.env.QR_ENCRYPTION_KEY || 'fallback_dummy_key_for_diagnostics_32_bytes_hex_val',
+    GOOGLE_CLIENT_IDS: process.env.GOOGLE_CLIENT_IDS || '',
+    RETRY_SECRET: process.env.RETRY_SECRET || 'dev_retry_secret',
+    APP_NAME: process.env.APP_NAME || 'Bizora',
+    WORKPLACE_JOIN_URL: process.env.WORKPLACE_JOIN_URL || 'https://www.bizora.shivamshankhdhar.online/join',
+  };
 } else {
   envData = parsedEnv.data;
 }

@@ -18,11 +18,15 @@ if (!global.mongooseCache) {
 }
 
 export async function connectDatabase(customUri?: string): Promise<typeof mongoose> {
-  if (cached.conn) {
+  if (cached.conn && cached.conn.connection.readyState === 1) {
     return cached.conn;
   }
+  cached.conn = null;
 
   const targetUri = customUri || env.MONGODB_URI;
+  if (!targetUri) {
+    throw new Error('MONGODB_URI is not configured in environment variables');
+  }
 
   if (!cached.promise) {
     const opts: mongoose.ConnectOptions = {

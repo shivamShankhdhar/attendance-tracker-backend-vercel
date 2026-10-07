@@ -4,8 +4,15 @@ import { env } from './config/env';
 
 async function bootstrap() {
   try {
-    // 1. Connect to MongoDB Atlas
-    await connectDatabase();
+    // 1. Connect to MongoDB
+    try {
+      await connectDatabase();
+    } catch (dbErr) {
+      console.error('[Server Warning] Could not connect to MongoDB on startup:', (dbErr as any)?.message || dbErr);
+      if (env.NODE_ENV === 'production') {
+        throw dbErr;
+      }
+    }
 
     // 2. Start HTTP listener
     const server = app.listen(env.PORT, () => {
