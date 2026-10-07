@@ -23,10 +23,11 @@ if (env.NODE_ENV !== 'test') {
   app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
 
-// Health check endpoint (for Vercel, monitors, load balancers)
-app.get('/health', (req: Request, res: Response) => {
+// Root and health check endpoints (for Vercel, monitors, load balancers)
+app.get(['/', '/health'], (req: Request, res: Response) => {
   res.status(200).json({
     status: 'healthy',
+    name: env.APP_NAME || 'Bizora Attendance Tracker API',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     env: env.NODE_ENV,

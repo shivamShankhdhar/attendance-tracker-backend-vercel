@@ -26,10 +26,10 @@ let envData: z.infer<typeof envSchema>;
 if (!parsedEnv.success) {
   const missingKeys = Object.keys(parsedEnv.error.format()).filter((k) => k !== '_errors');
   console.error('[Config Error] Missing environment variables:', missingKeys);
-  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'test') {
     envData = {
       PORT: Number(process.env.PORT) || 5001,
-      NODE_ENV: 'production',
+      NODE_ENV: (process.env.NODE_ENV as any) || 'production',
       MONGODB_URI: process.env.MONGODB_URI || '',
       JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
       JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',

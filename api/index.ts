@@ -15,7 +15,7 @@ const handler = async (req: any, res: any) => {
   }
 
   const url = req.url || '';
-  const isStaticOrHealth = url === '/health' || url.includes('/health') || url.includes('/callback');
+  const isStaticOrHealth = url === '' || url === '/' || url === '/health' || url.includes('/health') || url.includes('/callback');
 
   if (!isStaticOrHealth) {
     try {

@@ -63,6 +63,18 @@ export function errorHandler(
     return;
   }
 
+  // Handle Mongoose / BSON CastError (invalid ObjectId format)
+  if (err.name === 'CastError' || err.name === 'BSONError' || err.name === 'BSONTypeError') {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'INVALID_ID_FORMAT',
+        message: 'Invalid resource ID format in request parameters or body.',
+      },
+    });
+    return;
+  }
+
   // Handle JWT errors
   if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
     res.status(401).json({

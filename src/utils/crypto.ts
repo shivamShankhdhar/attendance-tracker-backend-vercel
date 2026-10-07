@@ -33,11 +33,19 @@ export async function verifyPin(pin: string, hash: string): Promise<boolean> {
   return bcrypt.compare(pin, hash);
 }
 
+function getEncryptionKey(): Buffer {
+  const rawKey = env.QR_ENCRYPTION_KEY || '';
+  if (/^[0-9a-fA-F]{64}$/.test(rawKey)) {
+    return Buffer.from(rawKey, 'hex');
+  }
+  return crypto.createHash('sha256').update(rawKey || 'default_secure_qr_encryption_key_32b').digest();
+}
+
 /**
  * Encrypt a string using AES-256-GCM with server QR_ENCRYPTION_KEY
  */
 export function encryptToken(plainText: string): string {
-  const key = Buffer.from(env.QR_ENCRYPTION_KEY.slice(0, 64), 'hex');
+  const key = getEncryptionKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
 
@@ -59,7 +67,7 @@ export function decryptToken(cipherTextWithMeta: string): string {
   }
 
   const [ivHex, encryptedHex, tagHex] = parts;
-  const key = Buffer.from(env.QR_ENCRYPTION_KEY.slice(0, 64), 'hex');
+  const key = getEncryptionKey();
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');
 
