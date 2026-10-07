@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bizora API &mdash; System Operational</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0D1109;
+      --card-bg: rgba(26, 33, 19, 0.7);
+      --card-border: rgba(91, 105, 45, 0.3);
+      --primary: #94A84B;
+      --primary-hover: #A5BA58;
+      --accent: #5B692D;
+      --text: #F1F4E8;
+      --text-muted: #9EAB8C;
+      --success: #4ADE80;
+      --code-bg: rgba(13, 17, 9, 0.8);
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      line-height: 1.6;
+      background-image: 
+        radial-gradient(circle at 50% 10%, rgba(91, 105, 45, 0.25), transparent 45%),
+        radial-gradient(circle at 90% 90%, rgba(74, 222, 128, 0.08), transparent 35%);
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 24px;
+      padding: 40px;
+      max-width: 540px;
+      width: 100%;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #7A8D3E, #5B692D);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+      font-weight: 800;
+      font-size: 22px;
+      box-shadow: 0 4px 12px rgba(91, 105, 45, 0.3);
+    }
+    .title {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(74, 222, 128, 0.12);
+      border: 1px solid rgba(74, 222, 128, 0.3);
+      color: var(--success);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--success);
+      animation: pulse 2s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+    .description {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+    .endpoints {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .endpoint-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--code-bg);
+      border: 1px solid rgba(91, 105, 45, 0.2);
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      text-decoration: none;
+      color: var(--text);
+      transition: all 0.2s ease;
+    }
+    .endpoint-item:hover {
+      border-color: var(--primary);
+      background: rgba(91, 105, 45, 0.15);
+      transform: translateY(-1px);
+    }
+    .method {
+      color: var(--primary);
+      font-weight: 700;
+      font-size: 11px;
+      margin-right: 8px;
+    }
+    .path {
+      color: var(--text);
+    }
+    .tag {
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 20px;
+      border-top: 1px solid rgba(91, 105, 45, 0.2);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .meta-item {
+      display: flex;
+      gap: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="brand">
+        <div class="logo-badge">B</div>
+        <div>
+          <div class="title">Bizora</div>
+          <div class="subtitle">Attendance Tracker API</div>
+        </div>
+      </div>
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        Operational
+      </div>
+    </div>
+
+    <p class="description">
+      High-performance backend API engine powering QR scan attendance, geofencing, real-time approval rosters, and multi-team hierarchy.
+    </p>
+
+    <div class="endpoints">
+      <a class="endpoint-item" href="/health" target="_blank" rel="noopener">
+        <div>
+          <span class="method">GET</span>
+          <span class="path">/health</span>
+        </div>
+        <span class="tag">Live Health & Uptime</span>
+      </a>
+      <a class="endpoint-item" href="/api/v1/auth/me" target="_blank" rel="noopener">
+        <div>
+          <span class="method">GET</span>
+          <span class="path">/api/v1/auth/me</span>
+        </div>
+        <span class="tag">User Profile (JWT)</span>
+      </a>
+    </div>
+
+    <div class="footer">
+      <div class="meta-item">
+        <span>Runtime:</span>
+        <strong style="color: var(--primary);">Vercel Serverless (Node.js)</strong>
+      </div>
+      <div class="meta-item">
+        <span>DB:</span>
+        <strong style="color: var(--success);">MongoDB Atlas</strong>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
