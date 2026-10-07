@@ -5,7 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && cp public/index.html dist/index.html",
     "start": "node dist/server.js",
     "test": "tsx --test tests/**/*.test.ts"
   },
