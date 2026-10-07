@@ -15,7 +15,19 @@ const handler = async (req: any, res: any) => {
   }
 
   const url = req.url || '';
-  const isStaticOrHealth = url === '' || url === '/' || url === '/health' || url.includes('/health') || url.includes('/callback');
+
+  if (url === '/' || url === '') {
+    return res.status(200).json({
+      status: 'healthy',
+      name: 'Bizora Attendance Tracker API',
+      message: 'All systems operational',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV || 'production',
+    });
+  }
+
+  const isStaticOrHealth = url === '/health' || url.includes('/health') || url.includes('/callback');
 
   if (!isStaticOrHealth) {
     try {
@@ -33,7 +45,12 @@ const handler = async (req: any, res: any) => {
     }
   }
 
-  return app(req, res);
+  return new Promise<void>((resolve, reject) => {
+    res.on('finish', resolve);
+    res.on('close', resolve);
+    res.on('error', reject);
+    app(req, res);
+  });
 };
 
 export default handler;
