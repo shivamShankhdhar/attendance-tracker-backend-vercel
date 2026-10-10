@@ -631,6 +631,18 @@ export class WorkplaceService {
       installLink,
     };
 
+    if ((workplace as any).targetTeamId) {
+      const team = await TeamModel.findById((workplace as any).targetTeamId).select('name teamCode color');
+      if (team) {
+        baseResult.targetTeam = {
+          id: team._id.toString(),
+          name: team.name,
+          teamCode: team.teamCode,
+          color: team.color,
+        };
+      }
+    }
+
     if (includeOwner) {
       const [owner, activeMembersCount] = await Promise.all([
         UserModel.findById(workplace.ownerId).select('name'),
