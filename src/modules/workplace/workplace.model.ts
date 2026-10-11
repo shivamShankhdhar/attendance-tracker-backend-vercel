@@ -13,6 +13,7 @@ export interface IWorkplace {
   longitude?: number;
   description?: string;
   joinInviteToken?: string;
+  joinInviteExpiresAt?: Date;
   previousJoinTokens?: string[];
   joinShareUrl?: string;
   wifiSsid?: string;
@@ -56,6 +57,7 @@ function wrapWorkplace(wp: any): IWorkplace | null {
       longitude: wp.longitude ?? undefined,
       description: wp.description ?? undefined,
       joinInviteToken: wp.joinInviteToken ?? undefined,
+      joinInviteExpiresAt: wp.joinInviteExpiresAt ?? undefined,
       previousJoinTokens: wp.previousJoinTokens || [],
       joinShareUrl: wp.joinShareUrl ?? undefined,
       wifiSsid: wp.wifiSsid ?? undefined,
@@ -76,6 +78,7 @@ function wrapWorkplace(wp: any): IWorkplace | null {
           longitude: curr.longitude !== undefined ? curr.longitude : undefined,
           description: curr.description !== undefined ? curr.description : undefined,
           joinInviteToken: curr.joinInviteToken !== undefined ? curr.joinInviteToken : undefined,
+          joinInviteExpiresAt: curr.joinInviteExpiresAt !== undefined ? curr.joinInviteExpiresAt : undefined,
           previousJoinTokens: curr.previousJoinTokens || [],
           joinShareUrl: curr.joinShareUrl !== undefined ? curr.joinShareUrl : undefined,
           wifiSsid: curr.wifiSsid !== undefined ? curr.wifiSsid : undefined,
@@ -149,6 +152,7 @@ export const WorkplaceModel = {
     if (setVals.timezone !== undefined) data.timezone = setVals.timezone;
     if (setVals.wifiSsid !== undefined) data.wifiSsid = setVals.wifiSsid;
     if (setVals.joinInviteToken !== undefined) data.joinInviteToken = setVals.joinInviteToken;
+    if (setVals.joinInviteExpiresAt !== undefined) data.joinInviteExpiresAt = setVals.joinInviteExpiresAt;
     if (setVals.joinShareUrl !== undefined) data.joinShareUrl = setVals.joinShareUrl;
     if (setVals.status !== undefined) data.status = setVals.status;
     if (setVals.attendanceSettings) {
@@ -186,6 +190,7 @@ export const WorkplaceModel = {
     const setVals = update.$set || update;
     if (setVals.joinShareUrl !== undefined) data.joinShareUrl = setVals.joinShareUrl;
     if (setVals.joinInviteToken !== undefined) data.joinInviteToken = setVals.joinInviteToken;
+    if (setVals.joinInviteExpiresAt !== undefined) data.joinInviteExpiresAt = setVals.joinInviteExpiresAt;
     if (setVals.wifiSsid !== undefined) data.wifiSsid = setVals.wifiSsid;
     if (setVals.name !== undefined) data.name = setVals.name;
     if (setVals.attendanceSettings) {
@@ -239,6 +244,7 @@ export const WorkplaceModel = {
         longitude: data.longitude ?? att.longitude ?? null,
         description: data.description || null,
         joinInviteToken: data.joinInviteToken || null,
+        joinInviteExpiresAt: data.joinInviteExpiresAt || null,
         previousJoinTokens: data.previousJoinTokens || [],
         joinShareUrl: data.joinShareUrl || null,
         wifiSsid: data.wifiSsid || null,

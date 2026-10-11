@@ -81,7 +81,8 @@ export class WorkplaceController {
   async getJoinQr(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const workplaceId = getParam(req, 'workplaceId');
-      const data = await workplaceService.getJoinQr(workplaceId);
+      const teamId = (req.query.teamId as string) || (req.body?.teamId as string) || undefined;
+      const data = await workplaceService.getJoinQr(workplaceId, teamId);
       res.status(200).json({ success: true, data });
     } catch (error) {
       next(error);
@@ -92,7 +93,8 @@ export class WorkplaceController {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
       const workplaceId = getParam(req, 'workplaceId');
-      const data = await workplaceService.rotateJoinQr(workplaceId, req.user.userId);
+      const teamId = (req.query.teamId as string) || (req.body?.teamId as string) || undefined;
+      const data = await workplaceService.rotateJoinQr(workplaceId, req.user.userId, teamId);
       res.status(200).json({ success: true, data });
     } catch (error) {
       next(error);

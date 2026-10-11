@@ -348,14 +348,22 @@ export class WorkplaceService {
             const cleanTok = extractedToken.toUpperCase();
             const wpCode = formatWorkplaceCode(wp).toUpperCase();
             if (
+              wp.joinInviteToken &&
+              extractedToken.toLowerCase() === wp.joinInviteToken.toLowerCase()
+            ) {
+              if (wp.joinInviteExpiresAt && new Date(wp.joinInviteExpiresAt) < new Date()) {
+                throw new AppError('This invite link has expired. Please ask the employer for a new link.', 400, 'EXPIRED_INVITE');
+              }
+              hasDirectJoinToken = true;
+            } else if (
               cleanTok === wpCode ||
               cleanTok === wp._id.toString().toUpperCase() ||
-              (wp.joinInviteToken && extractedToken.toLowerCase() === wp.joinInviteToken.toLowerCase()) ||
-              (wp.joinQrSecret && extractedToken === wp.joinQrSecret) ||
-              (wp.previousJoinTokens && wp.previousJoinTokens.includes(extractedToken.toLowerCase()))
+              (wp.joinQrSecret && extractedToken === wp.joinQrSecret)
             ) {
               hasDirectJoinToken = true;
             }
+          } else {
+            hasDirectJoinToken = true;
           }
           return {
             workplaceId: wp._id.toString(),
@@ -385,19 +393,38 @@ export class WorkplaceService {
       }
     }
 
-    // 0a. Direct lookup in WorkplaceModel (matches workplaceCode, active workplace short code, legacy token, or previous tokens)
+    // 0a. Direct lookup in WorkplaceModel (matches active workplace invite token or workplace code)
     const directWorkplace = await WorkplaceModel.findOne({
       $or: [
         { workplaceCode: tokenStr.toUpperCase() },
         { joinInviteToken: tokenStr.toLowerCase() },
-        { previousJoinTokens: tokenStr.toLowerCase() },
         { joinInviteToken: tokenStr },
-        { previousJoinTokens: tokenStr },
       ],
       status: 'ACTIVE',
     });
     if (directWorkplace) {
-      return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret, isCodeLookup: true };
+      const isInviteToken =
+        Boolean(directWorkplace.joinInviteToken) &&
+        (tokenStr.toLowerCase() === directWorkplace.joinInviteToken?.toLowerCase());
+
+      if (isInviteToken) {
+        if (directWorkplace.joinInviteExpiresAt && new Date(directWorkplace.joinInviteExpiresAt) < new Date()) {
+          throw new AppError('This invite link has expired. Please ask the employer for a new link.', 400, 'EXPIRED_INVITE');
+        }
+        return {
+          workplaceId: directWorkplace._id.toString(),
+          secret: directWorkplace.joinQrSecret,
+          isCodeLookup: true,
+          hasDirectJoinToken: true,
+        };
+      }
+
+      return {
+        workplaceId: directWorkplace._id.toString(),
+        secret: directWorkplace.joinQrSecret,
+        isCodeLookup: true,
+        hasDirectJoinToken: false,
+      };
     }
 
     // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode or id (without token)
@@ -416,7 +443,7 @@ export class WorkplaceService {
           workplaceId: wp._id.toString(),
           teamId: teamMatch._id.toString(),
           secret: wp.joinQrSecret,
-          hasDirectJoinToken: false,
+          hasDirectJoinToken: true,
           isCodeLookup: true,
         };
       }
@@ -509,7 +536,10 @@ export class WorkplaceService {
     if (/^[a-f0-9]{64}$/.test(tokenStr)) {
       const invited = await WorkplaceModel.findOne({ joinInviteToken: tokenStr });
       if (!invited) throw new AppError('This invitation is invalid or has been replaced.', 404, 'INVALID_QR_TOKEN');
-      return { workplaceId: invited._id.toString(), secret: invited.joinQrSecret };
+      if (invited.joinInviteExpiresAt && new Date(invited.joinInviteExpiresAt) < new Date()) {
+        throw new AppError('This invite link has expired. Please ask the employer for a new link.', 400, 'EXPIRED_INVITE');
+      }
+      return { workplaceId: invited._id.toString(), secret: invited.joinQrSecret, hasDirectJoinToken: true };
     }
 
     // Check if token matches an employee-specific invitation token
@@ -582,19 +612,24 @@ export class WorkplaceService {
   /**
    * Get secure Join QR code for workplace (EMPLOYER only)
    */
-  async getJoinQr(workplaceId: string) {
+  async getJoinQr(workplaceId: string, teamId?: string) {
     const workplace = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
 
-    // Ensure joinInviteToken exists and is in the modern short format (<= 8 chars, with '-')
+    // Ensure joinInviteToken exists, is in modern short format (<= 8 chars, with '-'), and is NOT expired
     const isOldLongToken = workplace.joinInviteToken && (workplace.joinInviteToken.length > 8 || !workplace.joinInviteToken.includes('-'));
-    if (!workplace.joinInviteToken || isOldLongToken) {
+    const isExpired = workplace.joinInviteExpiresAt && new Date(workplace.joinInviteExpiresAt) < new Date();
+
+    if (!workplace.joinInviteToken || isOldLongToken || isExpired || !workplace.joinInviteExpiresAt) {
       const shortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours dedicated time window
       const updateDoc: any = {
         $set: {
           joinInviteToken: shortToken,
+          joinInviteExpiresAt: expiresAt,
+          joinShareUrl: undefined,
           ...(workplace.joinQrSecret ? {} : { joinQrSecret: generateSecureToken(16) }),
         },
       };
@@ -605,14 +640,31 @@ export class WorkplaceService {
     }
     const current = await WorkplaceModel.findById(workplace._id).orFail();
     const encryptedToken = current.joinInviteToken!;
-    const deepLink = `bizora://join/${encodeURIComponent(encryptedToken)}`;
+
+    // Resolve optional teamCode if teamId is provided
+    let targetTeamCode: string | undefined;
+    if (teamId) {
+      const team = await TeamModel.findById(teamId);
+      if (team && team.workplaceId.toString() === workplace._id.toString()) {
+        targetTeamCode = team.teamCode;
+      }
+    }
+
     const landing = new URL(env.WORKPLACE_JOIN_URL);
     landing.pathname = `${landing.pathname.replace(/\/$/, '')}/${encodeURIComponent(encryptedToken)}`;
     landing.search = '';
+    if (targetTeamCode) {
+      landing.searchParams.set('teamCode', targetTeamCode);
+      landing.searchParams.set('token', encryptedToken);
+    }
     const canonicalLink = landing.toString();
 
+    const deepLink = targetTeamCode
+      ? `bizora://join/${encodeURIComponent(encryptedToken)}?teamCode=${encodeURIComponent(targetTeamCode)}&token=${encodeURIComponent(encryptedToken)}`
+      : `bizora://join/${encodeURIComponent(encryptedToken)}`;
+
     let joinLink = canonicalLink;
-    if (process.env.BRANCH_KEY) {
+    if (process.env.BRANCH_KEY && !targetTeamCode) {
       if (current.joinShareUrl && current.joinShareUrl.startsWith('https://')) {
         joinLink = current.joinShareUrl;
       } else {
@@ -621,7 +673,7 @@ export class WorkplaceService {
       }
     } else {
       // Invalidate and fix any stale domain previously stored in joinShareUrl
-      if (current.joinShareUrl !== canonicalLink) {
+      if (!targetTeamCode && current.joinShareUrl !== canonicalLink) {
         await WorkplaceModel.updateOne({ _id: current._id }, { $set: { joinShareUrl: canonicalLink } });
       }
       joinLink = canonicalLink;
@@ -636,27 +688,30 @@ export class WorkplaceService {
       qrPayload,
       deepLink,
       joinLink,
+      expiresAt: current.joinInviteExpiresAt,
     };
   }
 
   /**
    * Rotate Join QR code secret (invalidating all previous QR codes)
    */
-  async rotateJoinQr(workplaceId: string, actorId: string) {
+  async rotateJoinQr(workplaceId: string, actorId: string, teamId?: string) {
     const workplace = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
       throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
     }
 
     const shortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours dedicated time window
     workplace.joinQrSecret = generateSecureToken(16);
     workplace.joinInviteToken = shortToken;
+    workplace.joinInviteExpiresAt = expiresAt;
     // When rotating, intentionally invalidate previous tokens
     workplace.previousJoinTokens = [];
     workplace.joinShareUrl = undefined;
     await workplace.save();
 
-    return this.getJoinQr(workplaceId);
+    return this.getJoinQr(workplaceId, teamId);
   }
 
   /**
@@ -741,8 +796,8 @@ export class WorkplaceService {
       targetTeam = await TeamModel.findById((workplace as any).targetTeamId).select('name teamCode color');
     }
 
-    const canJoinDirectly = Boolean(targetTeam && (workplace as any).hasDirectJoinToken);
     const hasDirectJoinToken = Boolean((workplace as any).hasDirectJoinToken);
+    const canJoinDirectly = Boolean(hasDirectJoinToken || (workplace as any).targetTeamId);
 
     // If user is unauthenticated (e.g. previewing on sign-in screen before logging in)
     if (!userId || !userId.trim()) {
@@ -869,16 +924,18 @@ export class WorkplaceService {
       isEmployer,
       isInvited: Boolean(invitedMember) && !isOwner,
       invitedRole: invitedMember?.role || 'EMPLOYEE',
-      canJoinDirectly,
+      canJoinDirectly: Boolean(canJoinDirectly || invitedMember),
       hasDirectJoinToken,
       latestRequest: pendingRequest ? { id: pendingRequest._id.toString(), status: pendingRequest.status, requestedAt: pendingRequest.createdAt, reviewedAt: pendingRequest.reviewedAt, rejectionReason: pendingRequest.rejectionReason } : null,
-      pendingRequest: pendingRequest?.status === 'PENDING'
-        ? {
-            id: pendingRequest._id.toString(),
-            status: pendingRequest.status,
-            requestedAt: pendingRequest.createdAt,
-          }
-        : null,
+      pendingRequest: (canJoinDirectly || hasDirectJoinToken || Boolean(existingMember))
+        ? null
+        : (pendingRequest?.status === 'PENDING'
+            ? {
+                id: pendingRequest._id.toString(),
+                status: pendingRequest.status,
+                requestedAt: pendingRequest.createdAt,
+              }
+            : null),
       qrToken: rawToken,
     };
   }
@@ -901,7 +958,21 @@ export class WorkplaceService {
       status: 'ACTIVE',
     });
     if (existingMember) {
-      throw new AppError('You are already an active member of this workplace', 409, 'ALREADY_MEMBER');
+      // Clean up any stale pending requests for this active member
+      await WorkplaceJoinRequestModel.updateMany(
+        { workplaceId: workplace._id, userId: user._id, status: 'PENDING' },
+        { $set: { status: 'APPROVED', reviewedAt: new Date() } }
+      );
+
+      return {
+        message: 'You are already an active member of this workplace',
+        requestId: existingMember._id.toString(),
+        status: 'APPROVED',
+        workplaceName: workplace.name,
+        alreadyMember: true,
+        autoApproved: true,
+        workplaceId: workplace._id.toString(),
+      };
     }
 
     // If user is already an INVITED member added manually by the employer, directly join!
@@ -975,7 +1046,7 @@ export class WorkplaceService {
 
       return {
         message: 'Joined workplace successfully! No approval needed.',
-        requestId: 'direct-invited',
+        requestId: invitedMember._id.toString(),
         status: 'APPROVED',
         workplaceName: workplace.name,
         alreadyMember: true,
@@ -984,7 +1055,87 @@ export class WorkplaceService {
       };
     }
 
-    // Check if already has a PENDING request
+    // CHECK DIRECT INVITE LINK BEFORE CHECKING ANY PENDING REQUESTS!
+    const targetTeamId = (workplace as any).targetTeamId;
+    const hasDirectJoinToken =
+      Boolean((workplace as any).hasDirectJoinToken) ||
+      Boolean(
+        workplace.joinInviteToken &&
+        data.token &&
+        (data.token.toLowerCase() === workplace.joinInviteToken.toLowerCase() ||
+         data.token.includes(workplace.joinInviteToken))
+      );
+
+    if (hasDirectJoinToken || targetTeamId) {
+      let assignedTeamId = targetTeamId ? toId(targetTeamId) : undefined;
+      if (!assignedTeamId) {
+        const firstTeam = await TeamModel.findOne({ workplaceId: workplace._id }).sort({ createdAt: 1 });
+        if (firstTeam) {
+          assignedTeamId = firstTeam._id;
+        }
+      }
+
+      const code = `EMP-${generateSecureToken(5).toUpperCase()}`;
+      const newMember = await WorkplaceMemberModel.create({
+        workplaceId: workplace._id,
+        userId: user._id,
+        role: 'EMPLOYEE',
+        name: user.name,
+        ...(user.email ? { invitedEmail: user.email.toLowerCase() } : {}),
+        employeeCode: code,
+        teamId: assignedTeamId,
+        status: 'ACTIVE',
+        joinedAt: new Date(),
+      });
+
+      // Approve any existing pending requests for this user and workplace!
+      await WorkplaceJoinRequestModel.updateMany(
+        { workplaceId: workplace._id, userId: user._id, status: 'PENDING' },
+        { $set: { status: 'APPROVED', reviewedAt: new Date() } }
+      );
+
+      // CONSUME AND ROTATE THE INVITE LINK IMMEDIATELY SO IT CANNOT BE REUSED!
+      const newShortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
+      const newExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours dedicated time window
+      await WorkplaceModel.updateOne(
+        { _id: workplace._id },
+        {
+          $set: {
+            joinInviteToken: newShortToken,
+            joinInviteExpiresAt: newExpiresAt,
+            joinShareUrl: undefined,
+          },
+          $pull: {
+            previousJoinTokens: workplace.joinInviteToken,
+          },
+        }
+      );
+
+      await AuditLogModel.create({
+        workplaceId: workplace._id,
+        actorId: user._id,
+        action: 'DIRECT_INVITE_JOINED',
+        entityId: newMember._id.toString(),
+        metadata: {
+          name: user.name,
+          email: user.email,
+          teamId: assignedTeamId?.toString(),
+          consumedToken: workplace.joinInviteToken,
+        },
+      });
+
+      return {
+        message: 'Joined team successfully! No approval needed.',
+        requestId: newMember._id.toString(),
+        status: 'APPROVED',
+        workplaceName: workplace.name,
+        alreadyMember: true,
+        autoApproved: true,
+        workplaceId: workplace._id.toString(),
+      };
+    }
+
+    // Check if already has a PENDING request (only for manual non-invite lookups)
     const existingReq = await WorkplaceJoinRequestModel.findOne({
       workplaceId: workplace._id,
       userId: user._id,
@@ -998,47 +1149,6 @@ export class WorkplaceService {
         status: existingReq.status,
         workplaceName: workplace.name,
         requestedAt: existingReq.createdAt,
-      };
-    }
-
-    // If joining via a team-specific invite code/link with direct join token, directly join the team!
-    const targetTeamId = (workplace as any).targetTeamId;
-    const hasDirectJoinToken = (workplace as any).hasDirectJoinToken;
-    if (targetTeamId && hasDirectJoinToken) {
-      const code = `EMP-${generateSecureToken(5).toUpperCase()}`;
-      const newMember = await WorkplaceMemberModel.create({
-        workplaceId: workplace._id,
-        userId: user._id,
-        role: 'EMPLOYEE',
-        name: user.name,
-        ...(user.email ? { invitedEmail: user.email.toLowerCase() } : {}),
-        employeeCode: code,
-        teamId: toId(targetTeamId),
-        status: 'ACTIVE',
-        joinedAt: new Date(),
-      });
-
-      await WorkplaceJoinRequestModel.updateMany(
-        { workplaceId: workplace._id, userId: user._id, status: 'PENDING' },
-        { $set: { status: 'APPROVED', reviewedAt: new Date() } }
-      );
-
-      await AuditLogModel.create({
-        workplaceId: workplace._id,
-        actorId: user._id,
-        action: 'TEAM_INVITE_CLAIMED',
-        entityId: newMember._id.toString(),
-        metadata: { name: user.name, email: user.email, teamId: targetTeamId.toString() },
-      });
-
-      return {
-        message: 'Joined team successfully! No approval needed.',
-        requestId: newMember._id.toString(),
-        status: 'APPROVED',
-        workplaceName: workplace.name,
-        alreadyMember: true,
-        autoApproved: true,
-        workplaceId: workplace._id.toString(),
       };
     }
 
@@ -1086,6 +1196,24 @@ export class WorkplaceService {
    * Get all join requests submitted by current user (Employee side)
    */
   async getMyJoinRequests(userId: string) {
+    const activeMemberships = await WorkplaceMemberModel.find({
+      userId: toId(userId),
+      status: 'ACTIVE',
+    }).select('workplaceId');
+    const activeWorkplaceIds = new Set(activeMemberships.map((m) => m.workplaceId.toString()));
+
+    // Auto-approve any old pending requests for workplaces where user is already active member
+    if (activeWorkplaceIds.size > 0) {
+      await WorkplaceJoinRequestModel.updateMany(
+        {
+          userId: toId(userId),
+          workplaceId: { $in: Array.from(activeWorkplaceIds).map((id) => toId(id)) },
+          status: 'PENDING',
+        },
+        { $set: { status: 'APPROVED', reviewedAt: new Date() } }
+      );
+    }
+
     const requests = await WorkplaceJoinRequestModel.find({
       userId: toId(userId),
     })
@@ -1100,7 +1228,7 @@ export class WorkplaceService {
         workplaceName: r.workplaceId.name,
         address: r.workplaceId.address,
         timezone: r.workplaceId.timezone,
-        status: r.status,
+        status: activeWorkplaceIds.has(r.workplaceId._id.toString()) ? 'APPROVED' : r.status,
         note: r.note,
         rejectionReason: r.rejectionReason,
         requestedAt: r.createdAt,

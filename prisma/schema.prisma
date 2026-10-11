@@ -78,6 +78,7 @@ model Workplace {
   longitude                Float?
   description              String?
   joinInviteToken          String?   @unique
+  joinInviteExpiresAt      DateTime?
   previousJoinTokens       String[]  @default([])
   joinShareUrl             String?
   wifiSsid                 String?
