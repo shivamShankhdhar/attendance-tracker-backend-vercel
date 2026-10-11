@@ -898,8 +898,47 @@ export class WorkplaceService {
       };
     }
 
-    // The unique pending index prevents duplicate requests on rapid taps/retries.
+    // If joining via a team-specific invite code/link, directly join the team!
     const targetTeamId = (workplace as any).targetTeamId;
+    if (targetTeamId) {
+      const code = `EMP-${generateSecureToken(5).toUpperCase()}`;
+      const newMember = await WorkplaceMemberModel.create({
+        workplaceId: workplace._id,
+        userId: user._id,
+        role: 'EMPLOYEE',
+        name: user.name,
+        ...(user.email ? { invitedEmail: user.email.toLowerCase() } : {}),
+        employeeCode: code,
+        teamId: new Types.ObjectId(targetTeamId),
+        status: 'ACTIVE',
+        joinedAt: new Date(),
+      });
+
+      await WorkplaceJoinRequestModel.updateMany(
+        { workplaceId: workplace._id, userId: user._id, status: 'PENDING' },
+        { $set: { status: 'APPROVED', reviewedAt: new Date() } }
+      );
+
+      await AuditLogModel.create({
+        workplaceId: workplace._id,
+        actorId: user._id,
+        action: 'TEAM_INVITE_CLAIMED',
+        entityId: newMember._id.toString(),
+        metadata: { name: user.name, email: user.email, teamId: targetTeamId.toString() },
+      });
+
+      return {
+        message: 'Joined team successfully! No approval needed.',
+        requestId: newMember._id.toString(),
+        status: 'APPROVED',
+        workplaceName: workplace.name,
+        alreadyMember: true,
+        autoApproved: true,
+        workplaceId: workplace._id.toString(),
+      };
+    }
+
+    // The unique pending index prevents duplicate requests on rapid taps/retries.
     let joinReq: any;
     try {
       joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' }, { $setOnInsert: {
