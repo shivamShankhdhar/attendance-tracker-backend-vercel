@@ -125,9 +125,20 @@ export class WorkplaceService {
       joinedAt: new Date(),
     });
 
+    const memberObj = typeof (member as any).toJSON === 'function'
+      ? (member as any).toJSON()
+      : typeof (member as any).toObject === 'function'
+      ? (member as any).toObject()
+      : { ...member };
+
     return {
       workplace,
-      member,
+      member: {
+        ...memberObj,
+        workplaceId: workplace._id.toString(),
+        userId: user._id.toString(),
+        teamId: defaultTeam._id.toString(),
+      },
       team: defaultTeam,
     };
   }
