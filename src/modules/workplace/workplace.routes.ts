@@ -2,7 +2,7 @@ import { WorkplaceService } from './workplace.service';
 import { Router } from 'express';
 import { workplaceController } from './workplace.controller';
 import { validateRequest } from '../../middleware/validateRequest';
-import { authenticate } from '../../middleware/authenticate';
+import { authenticate, optionalAuthenticate } from '../../middleware/authenticate';
 import { requireWorkplaceMember, requireWorkplaceRole } from '../../middleware/authorize';
 import {
   createWorkplaceSchema,
@@ -32,6 +32,14 @@ workplaceRouter.get('/join/:token', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Join preview can be viewed by unauthenticated users or candidates
+workplaceRouter.post(
+  '/join-preview',
+  optionalAuthenticate,
+  validateRequest({ body: joinPreviewSchema }),
+  workplaceController.previewJoin
+);
+
 // Remaining workplace routes require authentication
 workplaceRouter.use(authenticate);
 
@@ -46,11 +54,6 @@ workplaceRouter.get('/pending-invites', workplaceController.getPendingInvites);
 workplaceRouter.post('/reset-my-account', workplaceController.resetMyAccount);
 
 // --- Candidate Employee Join Flow (User is authenticated, but not yet a member) ---
-workplaceRouter.post(
-  '/join-preview',
-  validateRequest({ body: joinPreviewSchema }),
-  workplaceController.previewJoin
-);
 
 workplaceRouter.post(
   '/join-requests',

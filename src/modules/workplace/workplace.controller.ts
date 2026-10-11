@@ -101,9 +101,9 @@ export class WorkplaceController {
 
   async previewJoin(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
       const { token } = req.body;
-      const data = await workplaceService.previewJoin(req.user.userId, token);
+      const userId = req.user?.userId || '';
+      const data = await workplaceService.previewJoin(userId, token);
       res.status(200).json({ success: true, data });
     } catch (error) {
       next(error);

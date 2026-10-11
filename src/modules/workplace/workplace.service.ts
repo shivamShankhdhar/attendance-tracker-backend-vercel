@@ -284,50 +284,91 @@ export class WorkplaceService {
   /**
    * Helper to parse and decrypt join token from various scan formats
    */
-  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean }> {
+  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean; hasDirectJoinToken?: boolean }> {
     let tokenStr = (rawInput || '').trim();
     // Handle surrounding quotes
     tokenStr = tokenStr.replace(/^["']|["']$/g, '').trim();
 
+    let extractedTeamCode: string | null = null;
+    let extractedToken: string | null = null;
+
     // 1. Check for query parameters (?teamCode=, ?code=, ?token=, ?invite=, ?team=)
-    const qParamMatch = tokenStr.match(/(?:teamCode|team|token|code|invite)=([^&\s#"']+)/i);
-    if (qParamMatch) {
-      tokenStr = decodeURIComponent(qParamMatch[1]).replace(/^#+/, '').trim();
-    } else {
-      // 2. Check for embedded URLs (http, https, bizora)
-      const embeddedUrlMatch = tokenStr.match(/(?:https?:\/\/|bizora:\/\/)[^\s"']+/i);
-      if (embeddedUrlMatch) {
-        try {
-          const rawUrl = embeddedUrlMatch[0];
-          const normalized = rawUrl.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
-          const parsedUrl = new URL(normalized);
-          const qVal = parsedUrl.searchParams.get('teamCode') || parsedUrl.searchParams.get('team') || parsedUrl.searchParams.get('token') || parsedUrl.searchParams.get('code') || parsedUrl.searchParams.get('invite');
-          if (qVal) {
-            tokenStr = qVal.replace(/^#+/, '').trim();
-          } else {
-            const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
-            const lastPart = pathParts[pathParts.length - 1];
-            if (lastPart && lastPart.toLowerCase() !== 'join' && lastPart.toLowerCase() !== 'dummy') {
-              tokenStr = decodeURIComponent(lastPart).replace(/^#+/, '').trim();
-            }
+    const tmParamMatch = tokenStr.match(/(?:teamCode|team)=([^&\s#"']+)/i);
+    if (tmParamMatch) {
+      extractedTeamCode = decodeURIComponent(tmParamMatch[1]).replace(/^#+/, '').trim();
+    }
+    const tokenParamMatch = tokenStr.match(/(?:token|code|invite)=([^&\s#"']+)/i);
+    if (tokenParamMatch) {
+      extractedToken = decodeURIComponent(tokenParamMatch[1]).replace(/^#+/, '').trim();
+    }
+
+    // 2. Check for embedded URLs (http, https, bizora)
+    const embeddedUrlMatch = tokenStr.match(/(?:https?:\/\/|bizora:\/\/)[^\s"']+/i);
+    if (embeddedUrlMatch) {
+      try {
+        const rawUrl = embeddedUrlMatch[0];
+        const normalized = rawUrl.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
+        const parsedUrl = new URL(normalized);
+        const qTm = parsedUrl.searchParams.get('teamCode') || parsedUrl.searchParams.get('team');
+        if (qTm) extractedTeamCode = qTm.replace(/^#+/, '').trim();
+        const qTok = parsedUrl.searchParams.get('token') || parsedUrl.searchParams.get('code') || parsedUrl.searchParams.get('invite');
+        if (qTok) extractedToken = qTok.replace(/^#+/, '').trim();
+
+        if (!extractedTeamCode && !extractedToken) {
+          const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+          const lastPart = pathParts[pathParts.length - 1];
+          if (lastPart && lastPart.toLowerCase() !== 'join' && lastPart.toLowerCase() !== 'dummy') {
+            tokenStr = decodeURIComponent(lastPart).replace(/^#+/, '').trim();
           }
-        } catch { /* Continue */ }
-      }
+        }
+      } catch { /* Continue */ }
     }
 
     // 3. Handle JSON payload (e.g. from QR scan)
     if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
       try {
         const parsed = JSON.parse(tokenStr);
-        if (parsed.teamCode) tokenStr = parsed.teamCode;
-        else if (parsed.token) tokenStr = parsed.token;
-        else if (parsed.code) tokenStr = parsed.code;
+        if (parsed.teamCode) extractedTeamCode = String(parsed.teamCode).replace(/^#+/, '').trim();
+        if (parsed.token) extractedToken = String(parsed.token).replace(/^#+/, '').trim();
+        if (parsed.code && !extractedToken) extractedToken = String(parsed.code).replace(/^#+/, '').trim();
       } catch {
         // Continue
       }
     }
 
-    // 4. Strip leading '#' and clean whitespace
+    // If an explicit teamCode was extracted from link/message/JSON:
+    if (extractedTeamCode) {
+      const cleanTeamLookup = extractedTeamCode.toUpperCase();
+      const teamMatch = await TeamModel.findOne({ teamCode: cleanTeamLookup });
+      if (teamMatch) {
+        const wp = await WorkplaceModel.findById(teamMatch.workplaceId);
+        if (wp && wp.status === 'ACTIVE') {
+          let hasDirectJoinToken = false;
+          if (extractedToken) {
+            const cleanTok = extractedToken.toUpperCase();
+            const wpCode = formatWorkplaceCode(wp).toUpperCase();
+            if (
+              cleanTok === wpCode ||
+              cleanTok === wp._id.toString().toUpperCase() ||
+              (wp.joinInviteToken && extractedToken.toLowerCase() === wp.joinInviteToken.toLowerCase()) ||
+              (wp.joinQrSecret && extractedToken === wp.joinQrSecret) ||
+              (wp.previousJoinTokens && wp.previousJoinTokens.includes(extractedToken.toLowerCase()))
+            ) {
+              hasDirectJoinToken = true;
+            }
+          }
+          return {
+            workplaceId: wp._id.toString(),
+            teamId: teamMatch._id.toString(),
+            secret: wp.joinQrSecret,
+            hasDirectJoinToken,
+            isCodeLookup: true,
+          };
+        }
+      }
+    }
+
+    // 4. Strip leading '#' and clean whitespace for fallback lookup
     tokenStr = tokenStr.replace(/^#+/, '').trim();
 
     // 5. Look for standard Workplace Code format (BWP-1234-567) or Team Code (TM...) if still embedded in text
@@ -359,7 +400,7 @@ export class WorkplaceService {
       return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret, isCodeLookup: true };
     }
 
-    // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode or id
+    // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode or id (without token)
     const cleanTeamLookup = tokenStr.replace(/^#/, '').toUpperCase();
     const teamMatch = await TeamModel.findOne({
       $or: [
@@ -375,6 +416,7 @@ export class WorkplaceService {
           workplaceId: wp._id.toString(),
           teamId: teamMatch._id.toString(),
           secret: wp.joinQrSecret,
+          hasDirectJoinToken: false,
           isCodeLookup: true,
         };
       }
@@ -621,7 +663,7 @@ export class WorkplaceService {
    * Preview workplace details before requesting to join (Employee side)
    */
   private async resolveJoinWorkplace(rawToken: string) {
-    const { workplaceId, teamId, secret, isCodeLookup } = await this.parseJoinToken(rawToken);
+    const { workplaceId, teamId, secret, isCodeLookup, hasDirectJoinToken } = await this.parseJoinToken(rawToken);
 
     const workplace: any = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
@@ -639,6 +681,7 @@ export class WorkplaceService {
     if (teamId) {
       workplace.targetTeamId = teamId;
     }
+    workplace.hasDirectJoinToken = Boolean(hasDirectJoinToken);
 
     return workplace;
   }
@@ -692,6 +735,45 @@ export class WorkplaceService {
 
   async previewJoin(userId: string, rawToken: string) {
     const workplace = await this.resolveJoinWorkplace(rawToken);
+
+    let targetTeam: any = null;
+    if ((workplace as any).targetTeamId) {
+      targetTeam = await TeamModel.findById((workplace as any).targetTeamId).select('name teamCode color');
+    }
+
+    const canJoinDirectly = Boolean(targetTeam && (workplace as any).hasDirectJoinToken);
+    const hasDirectJoinToken = Boolean((workplace as any).hasDirectJoinToken);
+
+    // If user is unauthenticated (e.g. previewing on sign-in screen before logging in)
+    if (!userId || !userId.trim()) {
+      const owner = await UserModel.findById(workplace.ownerId);
+      const activeMembersCount = await WorkplaceMemberModel.countDocuments({
+        workplaceId: workplace._id,
+        role: 'EMPLOYEE',
+        status: 'ACTIVE',
+      });
+      return {
+        workplaceId: workplace._id.toString(),
+        workplaceName: workplace.name,
+        workplaceCode: formatWorkplaceCode(workplace),
+        targetTeam: targetTeam ? { id: targetTeam._id.toString(), name: targetTeam.name, teamCode: targetTeam.teamCode, color: targetTeam.color } : null,
+        address: workplace.address,
+        description: workplace.description,
+        timezone: workplace.timezone,
+        ownerName: owner?.name || 'Workplace Admin',
+        ownerAvatarUrl: owner?.avatarUrl,
+        activeMembersCount,
+        alreadyMember: false,
+        isOwner: false,
+        isEmployer: false,
+        isInvited: false,
+        canJoinDirectly,
+        hasDirectJoinToken,
+        latestRequest: null,
+        pendingRequest: null,
+        qrToken: rawToken,
+      };
+    }
 
     // Check if user is already an ACTIVE member
     const existingMember = await WorkplaceMemberModel.findOne({
@@ -767,8 +849,7 @@ export class WorkplaceService {
 
     const owner = await UserModel.findById(workplace.ownerId);
 
-    let targetTeam: any = null;
-    if ((workplace as any).targetTeamId) {
+    if (!targetTeam && (workplace as any).targetTeamId) {
       targetTeam = await TeamModel.findById((workplace as any).targetTeamId).select('name teamCode color');
     }
 
@@ -788,6 +869,8 @@ export class WorkplaceService {
       isEmployer,
       isInvited: Boolean(invitedMember) && !isOwner,
       invitedRole: invitedMember?.role || 'EMPLOYEE',
+      canJoinDirectly,
+      hasDirectJoinToken,
       latestRequest: pendingRequest ? { id: pendingRequest._id.toString(), status: pendingRequest.status, requestedAt: pendingRequest.createdAt, reviewedAt: pendingRequest.reviewedAt, rejectionReason: pendingRequest.rejectionReason } : null,
       pendingRequest: pendingRequest?.status === 'PENDING'
         ? {
@@ -918,9 +1001,10 @@ export class WorkplaceService {
       };
     }
 
-    // If joining via a team-specific invite code/link, directly join the team!
+    // If joining via a team-specific invite code/link with direct join token, directly join the team!
     const targetTeamId = (workplace as any).targetTeamId;
-    if (targetTeamId) {
+    const hasDirectJoinToken = (workplace as any).hasDirectJoinToken;
+    if (targetTeamId && hasDirectJoinToken) {
       const code = `EMP-${generateSecureToken(5).toUpperCase()}`;
       const newMember = await WorkplaceMemberModel.create({
         workplaceId: workplace._id,
