@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { env } from '../../config/env';
 import { createDeferredInviteLink } from './workplace-links';
 import { NotificationOutboxModel } from '../notification/notification.model';
-import { Types, connection } from '../../config/prisma-compat';
+import { Types, connection, toId } from '../../config/prisma-compat';
 import { WorkplaceModel } from './workplace.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { TeamModel } from '../team/team.model';
@@ -148,7 +148,7 @@ export class WorkplaceService {
    */
   async getMyWorkplaces(userId: string) {
     const members = await WorkplaceMemberModel.find({
-      userId: new Types.ObjectId(userId),
+      userId: toId(userId),
       status: 'ACTIVE',
     }).populate('workplaceId');
 
@@ -285,45 +285,64 @@ export class WorkplaceService {
    * Helper to parse and decrypt join token from various scan formats
    */
   private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean }> {
-    let tokenStr = rawInput.trim();
+    let tokenStr = (rawInput || '').trim();
     // Handle surrounding quotes
-    tokenStr = tokenStr.replace(/^["']|["']$/g, '').replace(/^#/, '').trim();
+    tokenStr = tokenStr.replace(/^["']|["']$/g, '').trim();
 
-    // Handle custom app schemes like bizora://join/509e-250a8 or bizora://join?token=...
-    if (tokenStr.startsWith('bizora://')) {
-      const pathPart = tokenStr.replace(/^bizora:\/\/join\/?/, '').replace(/^bizora:\/\//, '');
-      if (pathPart && !pathPart.includes('?') && !pathPart.includes('=')) {
-        tokenStr = decodeURIComponent(pathPart);
+    // 1. Check for query parameters (?teamCode=, ?code=, ?token=, ?invite=, ?team=)
+    const qParamMatch = tokenStr.match(/(?:teamCode|team|token|code|invite)=([^&\s#"']+)/i);
+    if (qParamMatch) {
+      tokenStr = decodeURIComponent(qParamMatch[1]).replace(/^#+/, '').trim();
+    } else {
+      // 2. Check for embedded URLs (http, https, bizora)
+      const embeddedUrlMatch = tokenStr.match(/(?:https?:\/\/|bizora:\/\/)[^\s"']+/i);
+      if (embeddedUrlMatch) {
+        try {
+          const rawUrl = embeddedUrlMatch[0];
+          const normalized = rawUrl.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
+          const parsedUrl = new URL(normalized);
+          const qVal = parsedUrl.searchParams.get('teamCode') || parsedUrl.searchParams.get('team') || parsedUrl.searchParams.get('token') || parsedUrl.searchParams.get('code') || parsedUrl.searchParams.get('invite');
+          if (qVal) {
+            tokenStr = qVal.replace(/^#+/, '').trim();
+          } else {
+            const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+            const lastPart = pathParts[pathParts.length - 1];
+            if (lastPart && lastPart.toLowerCase() !== 'join' && lastPart.toLowerCase() !== 'dummy') {
+              tokenStr = decodeURIComponent(lastPart).replace(/^#+/, '').trim();
+            }
+          }
+        } catch { /* Continue */ }
       }
     }
 
-    // Handle bizora://join?token=... or ?code=... or ?teamCode=... or https://...?token=...
-    if (tokenStr.includes('token=') || tokenStr.includes('code=') || tokenStr.includes('invite=') || tokenStr.includes('teamCode=') || tokenStr.includes('team=')) {
-      try {
-        const normalized = tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
-        const url = new URL(normalized);
-        const qToken = url.searchParams.get('teamCode') || url.searchParams.get('team') || url.searchParams.get('token') || url.searchParams.get('code') || url.searchParams.get('invite');
-        if (qToken) tokenStr = qToken;
-      } catch {
-        const match = tokenStr.match(/(?:teamCode|team|token|code|invite)=([^&]+)/);
-        if (match) tokenStr = decodeURIComponent(match[1]);
-      }
-    } else if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
+    // 3. Handle JSON payload (e.g. from QR scan)
+    if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
       try {
         const parsed = JSON.parse(tokenStr);
         if (parsed.teamCode) tokenStr = parsed.teamCode;
         else if (parsed.token) tokenStr = parsed.token;
         else if (parsed.code) tokenStr = parsed.code;
       } catch {
-        // Continue with raw string
+        // Continue
       }
     }
 
-    try {
-      const url = new URL(tokenStr.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/'));
-      const match = url.pathname.match(/\/join\/([^/]+)\/?$/) || url.pathname.match(/\/([^/]+)\/?$/);
-      if (match && match[1] !== 'dummy') tokenStr = decodeURIComponent(match[1]);
-    } catch { /* Raw token or workplace code. */ }
+    // 4. Strip leading '#' and clean whitespace
+    tokenStr = tokenStr.replace(/^#+/, '').trim();
+
+    // 5. Look for standard Workplace Code format (BWP-1234-567) or Team Code (TM...) if still embedded in text
+    const bwpMatch = tokenStr.match(/\b(BWP-[0-9]{4}-[0-9]{3})\b/i);
+    if (bwpMatch) {
+      tokenStr = bwpMatch[1].toUpperCase();
+    } else {
+      const tmMatch = tokenStr.match(/\b([A-Za-z]{2}[0-9A-Za-z]{5,8})\b/);
+      if (tmMatch && !tokenStr.startsWith('http')) {
+        const candidate = tmMatch[1].toUpperCase();
+        if (candidate.startsWith('TM') || candidate.startsWith('WP') || candidate.startsWith('EM')) {
+          tokenStr = candidate;
+        }
+      }
+    }
 
     // 0a. Direct lookup in WorkplaceModel (matches workplaceCode, active workplace short code, legacy token, or previous tokens)
     const directWorkplace = await WorkplaceModel.findOne({
@@ -340,12 +359,13 @@ export class WorkplaceService {
       return { workplaceId: directWorkplace._id.toString(), secret: directWorkplace.joinQrSecret, isCodeLookup: true };
     }
 
-    // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode
+    // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode or id
     const cleanTeamLookup = tokenStr.replace(/^#/, '').toUpperCase();
     const teamMatch = await TeamModel.findOne({
       $or: [
         { teamCode: cleanTeamLookup },
-        { _id: Types.ObjectId.isValid(tokenStr) ? tokenStr : undefined }
+        { _id: tokenStr },
+        { id: tokenStr },
       ].filter(Boolean)
     });
     if (teamMatch) {
@@ -422,11 +442,11 @@ export class WorkplaceService {
           return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
         }
       }
-    } else if (tokenParts.length >= 3 && Types.ObjectId.isValid(tokenParts[0]) && Types.ObjectId.isValid(tokenParts[1])) {
+    } else if (tokenParts.length >= 3) {
       const [wpId, empId] = tokenParts;
       const member = await WorkplaceMemberModel.findOne({
-        _id: new Types.ObjectId(empId),
-        workplaceId: new Types.ObjectId(wpId),
+        _id: toId(empId),
+        workplaceId: toId(wpId),
         $or: [
           { invitationExpiresAt: { $gt: new Date() } },
           { invitationExpiresAt: { $exists: false } },
@@ -476,7 +496,7 @@ export class WorkplaceService {
       // Fall through to 6-char code / ID matching
     }
 
-    // 2. Try looking up by 6-char workplace code suffix or ObjectId
+    // 2. Try looking up by 6-char workplace code suffix or ObjectId / CUID
     const cleanCode = tokenStr.replace(/[^a-zA-Z0-9]/g, '');
     if (cleanCode.length === 6 && /^[a-fA-F0-9]{6}$/.test(cleanCode)) {
       const activeWorkplaces = await WorkplaceModel.find({ status: 'ACTIVE' });
@@ -484,7 +504,7 @@ export class WorkplaceService {
       if (matched) {
         return { workplaceId: matched._id.toString(), isCodeLookup: true };
       }
-    } else if (Types.ObjectId.isValid(cleanCode)) {
+    } else if (cleanCode) {
       const matched = await WorkplaceModel.findOne({ _id: cleanCode, status: 'ACTIVE' });
       if (matched) {
         return { workplaceId: matched._id.toString(), isCodeLookup: true };
@@ -676,7 +696,7 @@ export class WorkplaceService {
     // Check if user is already an ACTIVE member
     const existingMember = await WorkplaceMemberModel.findOne({
       workplaceId: workplace._id,
-      userId: new Types.ObjectId(userId),
+      userId: toId(userId),
       status: 'ACTIVE',
     });
 
@@ -686,7 +706,7 @@ export class WorkplaceService {
       workplaceId: workplace._id,
       $or: [
         ...(userDoc?.email ? [{ invitedEmail: userDoc.email.toLowerCase() }] : []),
-        { userId: new Types.ObjectId(userId) },
+        { userId: toId(userId) },
       ],
       status: 'INVITED',
     });
@@ -709,9 +729,9 @@ export class WorkplaceService {
           ],
           status: 'INVITED',
         });
-      } else if (parts.length >= 3 && Types.ObjectId.isValid(parts[1])) {
+      } else if (parts.length >= 3) {
         invitedMember = await WorkplaceMemberModel.findOne({
-          _id: new Types.ObjectId(parts[1]),
+          _id: toId(parts[1]),
           workplaceId: workplace._id,
           status: 'INVITED',
         });
@@ -732,7 +752,7 @@ export class WorkplaceService {
     // Check if user has an existing PENDING request
     const pendingRequest = await WorkplaceJoinRequestModel.findOne({
       workplaceId: workplace._id,
-      userId: new Types.ObjectId(userId),
+      userId: toId(userId),
       status: { $ne: 'CANCELLED' },
     }).sort({ createdAt: -1 });
 
@@ -830,9 +850,9 @@ export class WorkplaceService {
           ],
           status: 'INVITED',
         });
-      } else if (parts.length >= 3 && Types.ObjectId.isValid(parts[1])) {
+      } else if (parts.length >= 3) {
         invitedMember = await WorkplaceMemberModel.findOne({
-          _id: new Types.ObjectId(parts[1]),
+          _id: toId(parts[1]),
           workplaceId: workplace._id,
           status: 'INVITED',
         });
@@ -909,7 +929,7 @@ export class WorkplaceService {
         name: user.name,
         ...(user.email ? { invitedEmail: user.email.toLowerCase() } : {}),
         employeeCode: code,
-        teamId: new Types.ObjectId(targetTeamId),
+        teamId: toId(targetTeamId),
         status: 'ACTIVE',
         joinedAt: new Date(),
       });
@@ -944,7 +964,7 @@ export class WorkplaceService {
       joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate({ workplaceId: workplace._id, userId: user._id, status: 'PENDING' }, { $setOnInsert: {
         workplaceId: workplace._id,
         userId: user._id,
-        teamId: targetTeamId ? new Types.ObjectId(targetTeamId) : undefined,
+        teamId: targetTeamId ? toId(targetTeamId) : undefined,
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
@@ -983,7 +1003,7 @@ export class WorkplaceService {
    */
   async getMyJoinRequests(userId: string) {
     const requests = await WorkplaceJoinRequestModel.find({
-      userId: new Types.ObjectId(userId),
+      userId: toId(userId),
     })
       .populate('workplaceId', 'name address timezone ownerId')
       .sort({ createdAt: -1 });
@@ -1005,15 +1025,15 @@ export class WorkplaceService {
   }
 
   async getMyJoinRequest(userId: string, requestId: string) {
-    if (!Types.ObjectId.isValid(requestId)) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
-    const request = await WorkplaceJoinRequestModel.findOne({ _id: requestId, userId });
+    if (!requestId || !requestId.trim()) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
+    const request = await WorkplaceJoinRequestModel.findOne({ _id: requestId, userId: toId(userId) });
     if (!request) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
     const workplace = await WorkplaceModel.findById(request.workplaceId);
     if (!workplace) throw new AppError('Workplace no longer available', 404, 'WORKPLACE_NOT_FOUND');
     const [owner, activeMembersCount, member] = await Promise.all([
       UserModel.findById(workplace.ownerId),
       WorkplaceMemberModel.countDocuments({ workplaceId: workplace._id, role: 'EMPLOYEE', status: 'ACTIVE' }),
-      WorkplaceMemberModel.findOne({ workplaceId: workplace._id, userId, status: 'ACTIVE' }),
+      WorkplaceMemberModel.findOne({ workplaceId: workplace._id, userId: toId(userId), status: 'ACTIVE' }),
     ]);
     return {
       workplaceId: workplace._id.toString(), workplaceName: workplace.name, description: workplace.description,
@@ -1030,7 +1050,7 @@ export class WorkplaceService {
    */
   async cancelMyJoinRequest(userId: string, requestId: string) {
     const request = await WorkplaceJoinRequestModel.findOneAndUpdate({
-      _id: requestId, userId, status: 'PENDING',
+      _id: requestId, userId: toId(userId), status: 'PENDING',
     }, { $set: { status: 'CANCELLED' } }, { new: true });
     if (!request) throw new AppError('Pending join request not found', 409, 'REQUEST_ALREADY_REVIEWED');
 
@@ -1041,7 +1061,7 @@ export class WorkplaceService {
    * List join requests for a workplace (EMPLOYER only)
    */
   async getWorkplaceJoinRequests(workplaceId: string, status?: string) {
-    const filter: any = { workplaceId: new Types.ObjectId(workplaceId) };
+    const filter: any = { workplaceId: toId(workplaceId) };
     if (status && ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(status)) {
       filter.status = status;
     }

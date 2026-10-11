@@ -72,7 +72,12 @@ export const WorkplaceJoinRequestModel = {
       if (filter.id) where.id = toId(filter.id);
       if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
       if (filter.userId) where.userId = toId(filter.userId);
-      if (filter.status) where.status = filter.status;
+      if (filter.status) {
+        if (typeof filter.status === 'string') where.status = filter.status;
+        else if (filter.status.$ne) where.status = { not: filter.status.$ne };
+        else if (filter.status.$in) where.status = { in: filter.status.$in };
+        else if (filter.status.$nin) where.status = { notIn: filter.status.$nin };
+      }
       if (filter.employeeCode) where.employeeCode = filter.employeeCode;
 
       if (filter.$or) {
@@ -80,7 +85,12 @@ export const WorkplaceJoinRequestModel = {
           const item: any = {};
           if (o.userId) item.userId = toId(o.userId);
           if (o.employeeCode) item.employeeCode = o.employeeCode;
-          if (o.status) item.status = o.status;
+          if (o.status) {
+            if (typeof o.status === 'string') item.status = o.status;
+            else if (o.status.$ne) item.status = { not: o.status.$ne };
+            else if (o.status.$in) item.status = { in: o.status.$in };
+            else if (o.status.$nin) item.status = { notIn: o.status.$nin };
+          }
           return item;
         });
       }
@@ -105,7 +115,12 @@ export const WorkplaceJoinRequestModel = {
     const where: any = {};
     if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
     if (filter.userId) where.userId = toId(filter.userId);
-    if (filter.status) where.status = filter.status;
+    if (filter.status) {
+      if (typeof filter.status === 'string') where.status = filter.status;
+      else if (filter.status.$ne) where.status = { not: filter.status.$ne };
+      else if (filter.status.$in) where.status = { in: filter.status.$in };
+      else if (filter.status.$nin) where.status = { notIn: filter.status.$nin };
+    }
     if (filter.employeeCode) where.employeeCode = filter.employeeCode;
 
     const data: any = {};
@@ -124,7 +139,12 @@ export const WorkplaceJoinRequestModel = {
       const where: any = {};
       if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
       if (filter.userId) where.userId = toId(filter.userId);
-      if (filter.status) where.status = filter.status;
+      if (filter.status) {
+        if (typeof filter.status === 'string') where.status = filter.status;
+        else if (filter.status.$ne) where.status = { not: filter.status.$ne };
+        else if (filter.status.$in) where.status = { in: filter.status.$in };
+        else if (filter.status.$nin) where.status = { notIn: filter.status.$nin };
+      }
 
       const orderBy: any[] = [];
       if (sort) {
@@ -146,9 +166,35 @@ export const WorkplaceJoinRequestModel = {
     if (filter._id) where.id = toId(filter._id);
     if (filter.id) where.id = toId(filter.id);
     if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
-    if (filter.status) where.status = filter.status;
+    if (filter.userId) where.userId = toId(filter.userId);
+    if (filter.status) {
+      if (typeof filter.status === 'string') where.status = filter.status;
+      else if (filter.status.$ne) where.status = { not: filter.status.$ne };
+      else if (filter.status.$in) where.status = { in: filter.status.$in };
+      else if (filter.status.$nin) where.status = { notIn: filter.status.$nin };
+    }
 
     const existing = await prisma.workplaceJoinRequest.findFirst({ where });
+    if (!existing && options.upsert) {
+      const setOnInsert = update.$setOnInsert || {};
+      const setVals = update.$set || {};
+      const dataToCreate: any = {
+        workplaceId: toId(filter.workplaceId || setOnInsert.workplaceId || setVals.workplaceId),
+        userId: toId(filter.userId || setOnInsert.userId || setVals.userId),
+        teamId: setOnInsert.teamId ? toId(setOnInsert.teamId) : setVals.teamId ? toId(setVals.teamId) : null,
+        name: setOnInsert.name || setVals.name || '',
+        email: setOnInsert.email || setVals.email || '',
+        employeeCode: setOnInsert.employeeCode || setVals.employeeCode || null,
+        avatarUrl: setOnInsert.avatarUrl || setVals.avatarUrl || null,
+        note: setOnInsert.note || setVals.note || null,
+        status: setOnInsert.status || setVals.status || filter.status || 'PENDING',
+        reviewedById: setOnInsert.reviewedBy ? toId(setOnInsert.reviewedBy) : setVals.reviewedBy ? toId(setVals.reviewedBy) : null,
+        reviewedAt: setOnInsert.reviewedAt || setVals.reviewedAt || null,
+        rejectionReason: setOnInsert.rejectionReason || setVals.rejectionReason || null,
+      };
+      const created = await prisma.workplaceJoinRequest.create({ data: dataToCreate });
+      return wrapJoinRequest(created);
+    }
     if (!existing) return null;
 
     const setVals = update.$set || update;

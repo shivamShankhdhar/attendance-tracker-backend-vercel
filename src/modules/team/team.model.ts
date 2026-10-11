@@ -62,7 +62,7 @@ export const TeamModel = {
       if (filter.id) where.id = toId(filter.id);
       if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
       if (filter.isDefault !== undefined) where.isDefault = filter.isDefault;
-      if (filter.teamCode) where.teamCode = filter.teamCode;
+      if (filter.teamCode) where.teamCode = { equals: filter.teamCode, mode: 'insensitive' };
 
       if (filter.name) {
         if (typeof filter.name === 'string') {
@@ -78,7 +78,7 @@ export const TeamModel = {
         where.OR = filter.$or.map((o: any) => {
           const item: any = {};
           if (o._id) item.id = toId(o._id);
-          if (o.teamCode) item.teamCode = o.teamCode;
+          if (o.teamCode) item.teamCode = { equals: o.teamCode, mode: 'insensitive' };
           return item;
         });
       }
