@@ -4,11 +4,11 @@ import { env } from './config/env';
 
 async function bootstrap() {
   try {
-    // 1. Connect to MongoDB
+    // 1. Connect to PostgreSQL
     try {
       await connectDatabase();
     } catch (dbErr) {
-      console.error('[Server Warning] Could not connect to MongoDB on startup:', (dbErr as any)?.message || dbErr);
+      console.error('[Server Warning] Could not connect to PostgreSQL on startup:', (dbErr as any)?.message || dbErr);
       if (env.NODE_ENV === 'production') {
         throw dbErr;
       }

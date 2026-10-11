@@ -1,66 +1,204 @@
-import { Schema, model, Document, Types } from 'mongoose';
+import { prisma } from '../../config/database';
+import { createDocProxy, toId, createPopulatedRef, QueryBuilder, SingleQueryBuilder } from '../../config/prisma-compat';
 
 export type JoinRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 
-export interface IWorkplaceJoinRequest extends Document {
-  _id: Types.ObjectId;
-  workplaceId: Types.ObjectId;
-  userId: Types.ObjectId;
-  teamId?: Types.ObjectId;
+export interface IWorkplaceJoinRequest {
+  _id: any;
+  id: string;
+  workplaceId: any;
+  userId: any;
+  teamId?: any;
   name: string;
   email?: string;
   employeeCode?: string;
   avatarUrl?: string;
   note?: string;
   status: JoinRequestStatus;
-  reviewedBy?: Types.ObjectId;
+  reviewedBy?: any;
   reviewedAt?: Date;
   rejectionReason?: string;
   createdAt: Date;
   updatedAt: Date;
+  save(): Promise<IWorkplaceJoinRequest>;
 }
 
-const workplaceJoinRequestSchema = new Schema<IWorkplaceJoinRequest>(
-  {
-    workplaceId: { type: Schema.Types.ObjectId, ref: 'Workplace', required: true, index: true },
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    teamId: { type: Schema.Types.ObjectId, ref: 'Team', index: true },
-    name: { type: String, required: true, trim: true },
-    email: { type: String, trim: true, lowercase: true, default: '' },
-    employeeCode: { type: String, trim: true, uppercase: true },
-    avatarUrl: { type: String, trim: true },
-    note: { type: String, trim: true, maxlength: 200 },
-    status: {
-      type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
-      default: 'PENDING',
-      required: true,
-      index: true,
+function wrapJoinRequest(r: any): IWorkplaceJoinRequest | null {
+  if (!r) return null;
+  return createDocProxy<any>(
+    {
+      ...r,
+      _id: r.id,
+      workplaceId: createPopulatedRef(r.workplaceId, r.workplace),
+      userId: createPopulatedRef(r.userId, r.user),
+      teamId: r.teamId || r.team ? createPopulatedRef(r.teamId, r.team) : undefined,
+      email: r.email ?? undefined,
+      employeeCode: r.employeeCode ?? undefined,
+      avatarUrl: r.avatarUrl ?? undefined,
+      note: r.note ?? undefined,
+      reviewedBy: r.reviewedById || r.reviewedBy ? createPopulatedRef(r.reviewedById, r.reviewedBy) : undefined,
+      reviewedAt: r.reviewedAt ?? undefined,
+      rejectionReason: r.rejectionReason ?? undefined,
     },
-    reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    reviewedAt: { type: Date },
-    rejectionReason: { type: String, trim: true, maxlength: 300 },
+    async (curr) => {
+      const updated = await prisma.workplaceJoinRequest.update({
+        where: { id: curr.id },
+        data: {
+          status: curr.status,
+          reviewedById: curr.reviewedBy ? toId(curr.reviewedBy) : null,
+          reviewedAt: curr.reviewedAt || null,
+          rejectionReason: curr.rejectionReason !== undefined ? curr.rejectionReason : null,
+        },
+      });
+      return wrapJoinRequest(updated);
+    }
+  ) as IWorkplaceJoinRequest;
+}
+
+export const WorkplaceJoinRequestModel = {
+  findById(id: any): SingleQueryBuilder<IWorkplaceJoinRequest> {
+    return new SingleQueryBuilder<IWorkplaceJoinRequest>(async () => {
+      const rawId = toId(id);
+      if (!rawId) return null;
+      const req = await prisma.workplaceJoinRequest.findUnique({ where: { id: rawId } });
+      return wrapJoinRequest(req);
+    });
   },
-  {
-    timestamps: true,
-  }
-);
 
-// Indexes
-workplaceJoinRequestSchema.index({ workplaceId: 1, status: 1, createdAt: -1 });
-workplaceJoinRequestSchema.index({ userId: 1, status: 1, createdAt: -1 });
-// Ensure one pending request per user per workplace
-workplaceJoinRequestSchema.index(
-  { workplaceId: 1, userId: 1 },
-  { unique: true, partialFilterExpression: { status: 'PENDING' } }
-);
-// Ensure one pending request per employeeCode per workplace
-workplaceJoinRequestSchema.index(
-  { workplaceId: 1, employeeCode: 1 },
-  { unique: true, partialFilterExpression: { status: 'PENDING', employeeCode: { $exists: true, $type: 'string' } } }
-);
+  findOne(filter: any): SingleQueryBuilder<IWorkplaceJoinRequest> {
+    return new SingleQueryBuilder<IWorkplaceJoinRequest>(async ({ sort }) => {
+      const where: any = {};
+      if (filter._id) where.id = toId(filter._id);
+      if (filter.id) where.id = toId(filter.id);
+      if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
+      if (filter.userId) where.userId = toId(filter.userId);
+      if (filter.status) where.status = filter.status;
+      if (filter.employeeCode) where.employeeCode = filter.employeeCode;
 
-export const WorkplaceJoinRequestModel = model<IWorkplaceJoinRequest>(
-  'WorkplaceJoinRequest',
-  workplaceJoinRequestSchema
-);
+      if (filter.$or) {
+        where.OR = filter.$or.map((o: any) => {
+          const item: any = {};
+          if (o.userId) item.userId = toId(o.userId);
+          if (o.employeeCode) item.employeeCode = o.employeeCode;
+          if (o.status) item.status = o.status;
+          return item;
+        });
+      }
+
+      let orderBy: any = { createdAt: 'desc' };
+      if (sort) {
+        if (sort.createdAt) orderBy = { createdAt: sort.createdAt === -1 ? 'desc' : 'asc' };
+        if (sort.updatedAt) orderBy = { updatedAt: sort.updatedAt === -1 ? 'desc' : 'asc' };
+      } else if (filter.updatedAt) {
+        orderBy = { updatedAt: 'desc' };
+      }
+
+      const req = await prisma.workplaceJoinRequest.findFirst({
+        where,
+        orderBy,
+      });
+      return wrapJoinRequest(req);
+    });
+  },
+
+  async updateMany(filter: any, update: any) {
+    const where: any = {};
+    if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
+    if (filter.userId) where.userId = toId(filter.userId);
+    if (filter.status) where.status = filter.status;
+    if (filter.employeeCode) where.employeeCode = filter.employeeCode;
+
+    const data: any = {};
+    const setVals = update.$set || update;
+    if (setVals.status !== undefined) data.status = setVals.status;
+    if (setVals.rejectionReason !== undefined) data.rejectionReason = setVals.rejectionReason;
+    if (setVals.reviewedBy) data.reviewedById = toId(setVals.reviewedBy);
+    if (setVals.reviewedAt) data.reviewedAt = setVals.reviewedAt;
+
+    const res = await prisma.workplaceJoinRequest.updateMany({ where, data });
+    return { modifiedCount: res.count };
+  },
+
+  find(filter: any = {}): QueryBuilder<IWorkplaceJoinRequest> {
+    return new QueryBuilder<IWorkplaceJoinRequest>(async ({ sort, limit }) => {
+      const where: any = {};
+      if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
+      if (filter.userId) where.userId = toId(filter.userId);
+      if (filter.status) where.status = filter.status;
+
+      const orderBy: any[] = [];
+      if (sort) {
+        if (sort.createdAt !== undefined) orderBy.push({ createdAt: sort.createdAt === -1 ? 'desc' : 'asc' });
+        if (sort.updatedAt !== undefined) orderBy.push({ updatedAt: sort.updatedAt === -1 ? 'desc' : 'asc' });
+      }
+
+      const reqs = await prisma.workplaceJoinRequest.findMany({
+        where,
+        take: limit,
+        orderBy: orderBy.length > 0 ? orderBy : { createdAt: 'desc' },
+      });
+      return reqs.map((r) => wrapJoinRequest(r) as IWorkplaceJoinRequest);
+    });
+  },
+
+  async findOneAndUpdate(filter: any, update: any, options: any = {}): Promise<IWorkplaceJoinRequest | null> {
+    const where: any = {};
+    if (filter._id) where.id = toId(filter._id);
+    if (filter.id) where.id = toId(filter.id);
+    if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
+    if (filter.status) where.status = filter.status;
+
+    const existing = await prisma.workplaceJoinRequest.findFirst({ where });
+    if (!existing) return null;
+
+    const setVals = update.$set || update;
+    const updated = await prisma.workplaceJoinRequest.update({
+      where: { id: existing.id },
+      data: {
+        status: setVals.status !== undefined ? setVals.status : existing.status,
+        reviewedById: setVals.reviewedBy ? toId(setVals.reviewedBy) : existing.reviewedById,
+        reviewedAt: setVals.reviewedAt || existing.reviewedAt,
+        rejectionReason: setVals.rejectionReason !== undefined ? setVals.rejectionReason : existing.rejectionReason,
+      },
+    });
+    return wrapJoinRequest(updated);
+  },
+
+  async create(data: any): Promise<IWorkplaceJoinRequest> {
+    const created = await prisma.workplaceJoinRequest.create({
+      data: {
+        ...(data._id ? { id: toId(data._id) } : {}),
+        workplaceId: toId(data.workplaceId),
+        userId: toId(data.userId),
+        teamId: data.teamId ? toId(data.teamId) : null,
+        name: data.name,
+        email: data.email || '',
+        employeeCode: data.employeeCode || null,
+        avatarUrl: data.avatarUrl || null,
+        note: data.note || null,
+        status: data.status || 'PENDING',
+        reviewedById: data.reviewedBy ? toId(data.reviewedBy) : null,
+        reviewedAt: data.reviewedAt || null,
+        rejectionReason: data.rejectionReason || null,
+      },
+    });
+    return wrapJoinRequest(created)!;
+  },
+
+  async deleteOne(filter: any) {
+    const where: any = {};
+    if (filter._id) where.id = toId(filter._id);
+    const existing = await prisma.workplaceJoinRequest.findFirst({ where });
+    if (!existing) return { deletedCount: 0 };
+    await prisma.workplaceJoinRequest.delete({ where: { id: existing.id } });
+    return { deletedCount: 1 };
+  },
+
+  async deleteMany(filter: any = {}) {
+    const where: any = {};
+    if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
+    if (filter.userId) where.userId = toId(filter.userId);
+    const res = await prisma.workplaceJoinRequest.deleteMany({ where });
+    return { deletedCount: res.count };
+  },
+};

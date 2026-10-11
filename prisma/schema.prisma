@@ -1,0 +1,321 @@
+// This is your Prisma schema file for Attendance Tracker Backend (PostgreSQL)
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_URL")
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  name                String
+  email               String?   @unique
+  phone               String?   @unique
+  avatarUrl           String?
+  googleSub           String?   @unique
+  status              String    @default("ACTIVE") // ACTIVE, INACTIVE
+  tokenVersion        Int       @default(1)
+  expoPushToken       String?
+  mpinHash            String?
+  mpinFailedAttempts  Int       @default(0)
+  mpinLockedUntil     DateTime?
+  mpinAttemptVersion  Int       @default(0)
+  hasMpin             Boolean   @default(false)
+  appLockEnabled      Boolean   @default(false)
+  biometricEnabled    Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relationships with Cascade Delete
+  ownedWorkplaces           Workplace[]              @relation("WorkplaceOwner")
+  memberships               WorkplaceMember[]
+  joinRequests              WorkplaceJoinRequest[]   @relation("UserJoinRequests")
+  reviewedJoinRequests      WorkplaceJoinRequest[]   @relation("ReviewedJoinRequests")
+  mpinOtps                  MpinOtp[]
+  attendances               Attendance[]             @relation("UserAttendance")
+  approvedAttendances       Attendance[]             @relation("ApprovedAttendances")
+  createdSessions           AttendanceSession[]      @relation("CreatedSessions")
+  attendanceRequests        AttendanceRequest[]      @relation("UserAttendanceRequests")
+  reviewedAttendanceRequests AttendanceRequest[]     @relation("ReviewedAttendanceRequests")
+  notifications             NotificationOutbox[]
+  auditLogs                 AuditLog[]
+
+  @@map("users")
+}
+
+model MpinOtp {
+  id         String   @id @default(cuid())
+  userId     String
+  email      String
+  otpHash    String
+  purpose    String   // RESET_MPIN, CHANGE_MPIN
+  resetToken String?  @unique
+  isVerified Boolean  @default(false)
+  attempts   Int      @default(0)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+  @@map("mpin_otps")
+}
+
+model Workplace {
+  id                       String    @id @default(cuid())
+  name                     String
+  workplaceCode            String?   @unique
+  ownerId                  String
+  timezone                 String    @default("Asia/Kolkata")
+  address                  String?
+  latitude                 Float?
+  longitude                Float?
+  description              String?
+  joinInviteToken          String?   @unique
+  previousJoinTokens       String[]  @default([])
+  joinShareUrl             String?
+  wifiSsid                 String?
+  requireWifi              Boolean   @default(false)
+  autoCloseHour            Int       @default(23)
+  allowEmployeeViewHistory Boolean   @default(true)
+  requireGeofence          Boolean   @default(false)
+  geoLatitude              Float?
+  geoLongitude             Float?
+  geofenceRadius           Float?    @default(100)
+  joinQrSecret             String?
+  joinQrEnabled            Boolean   @default(true)
+  status                   String    @default("ACTIVE") // ACTIVE, INACTIVE
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  // Cascade delete everything related when workplace is deleted
+  owner                    User                   @relation("WorkplaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  teams                    Team[]
+  members                  WorkplaceMember[]
+  joinRequests             WorkplaceJoinRequest[]
+  attendanceSessions       AttendanceSession[]
+  attendanceRecords        Attendance[]
+  attendanceRequests       AttendanceRequest[]
+  notifications            NotificationOutbox[]
+  auditLogs                AuditLog[]
+
+  @@index([ownerId])
+  @@map("workplaces")
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  workplaceId String
+  name        String
+  teamCode    String?  @unique
+  description String?
+  color       String   @default("#5B692D")
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workplace    Workplace              @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  members      WorkplaceMember[]
+  joinRequests WorkplaceJoinRequest[]
+
+  @@unique([workplaceId, name])
+  @@index([workplaceId])
+  @@map("teams")
+}
+
+model WorkplaceMember {
+  id                  String    @id @default(cuid())
+  workplaceId         String
+  userId              String?
+  teamId              String?
+  role                String    // EMPLOYER, EMPLOYEE
+  name                String
+  employeeCode        String?
+  invitedEmail        String?
+  pinHash             String?
+  status              String    @default("INVITED") // INVITED, ACTIVE, INACTIVE
+  invitationCode      String?   @unique
+  invitationTokenHash String?   @unique
+  invitationExpiresAt DateTime?
+  joinedAt            DateTime?
+  lastWifiSeenAt      DateTime?
+  lastConnectedSsid   String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  workplace          Workplace           @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  user               User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team               Team?               @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  attendances        Attendance[]
+  attendanceRequests AttendanceRequest[]
+
+  @@unique([workplaceId, userId])
+  @@unique([workplaceId, employeeCode])
+  @@unique([workplaceId, invitedEmail])
+  @@index([workplaceId, status])
+  @@index([userId])
+  @@index([teamId])
+  @@map("workplace_members")
+}
+
+model WorkplaceJoinRequest {
+  id              String    @id @default(cuid())
+  workplaceId     String
+  userId          String
+  teamId          String?
+  name            String
+  email           String?   @default("")
+  employeeCode    String?
+  avatarUrl       String?
+  note            String?
+  status          String    @default("PENDING") // PENDING, APPROVED, REJECTED, CANCELLED
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workplace       Workplace @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  user            User      @relation("UserJoinRequests", fields: [userId], references: [id], onDelete: Cascade)
+  team            Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  reviewedBy      User?     @relation("ReviewedJoinRequests", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([workplaceId, status, createdAt])
+  @@index([userId, status, createdAt])
+  @@index([workplaceId, userId])
+  @@index([workplaceId, employeeCode])
+  @@map("workplace_join_requests")
+}
+
+model AttendanceSession {
+  id               String              @id @default(cuid())
+  workplaceId      String
+  createdById      String
+  attendanceDate   String              // 'YYYY-MM-DD'
+  qrTokenHash      String              @unique
+  encryptedQrToken String
+  status           String              @default("OPEN") // OPEN, CLOSED
+  openedAt         DateTime
+  expiresAt        DateTime
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  workplace        Workplace           @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  createdBy        User                @relation("CreatedSessions", fields: [createdById], references: [id], onDelete: Cascade)
+  requests         AttendanceRequest[]
+
+  @@unique([workplaceId, attendanceDate])
+  @@index([workplaceId, attendanceDate])
+  @@map("attendance_sessions")
+}
+
+model Attendance {
+  id                  String             @id @default(cuid())
+  workplaceId         String
+  employeeMemberId    String
+  userId              String?
+  attendanceDate      String             // 'YYYY-MM-DD'
+  status              String             @default("PRESENT") // PRESENT, ABSENT, HALF_DAY, LEAVE
+  checkInTime         DateTime?
+  checkOutTime        DateTime?
+  approvedAt          DateTime?
+  approvedById        String?
+  source              String             @default("QR_REQUEST") // QR_REQUEST, QR_SCAN, MANUAL, GEOFENCE
+  attendanceRequestId String?
+  qrVerified          Boolean            @default(false)
+  wifiVerified        Boolean?
+  geofenceVerified    Boolean?
+  distanceMeters      Float?
+  correctionReason    String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  workplace           Workplace          @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  employeeMember      WorkplaceMember    @relation(fields: [employeeMemberId], references: [id], onDelete: Cascade)
+  user                User?              @relation("UserAttendance", fields: [userId], references: [id], onDelete: SetNull)
+  approvedBy          User?              @relation("ApprovedAttendances", fields: [approvedById], references: [id], onDelete: SetNull)
+  attendanceRequest   AttendanceRequest? @relation(fields: [attendanceRequestId], references: [id], onDelete: SetNull)
+
+  @@unique([workplaceId, employeeMemberId, attendanceDate])
+  @@index([workplaceId, attendanceDate, status])
+  @@index([employeeMemberId, attendanceDate])
+  @@map("attendances")
+}
+
+model AttendanceRequest {
+  id                  String             @id @default(cuid())
+  workplaceId         String
+  attendanceSessionId String
+  employeeMemberId    String
+  userId              String
+  attendanceDate      String             // 'YYYY-MM-DD'
+  requestedAt         DateTime
+  requestType         String             @default("CHECK_IN") // CHECK_IN, CHECK_OUT
+  qrVerified          Boolean            @default(false)
+  wifiVerified        Boolean?
+  geofenceVerified    Boolean?
+  distanceMeters      Float?
+  deviceSsid          String?
+  status              String             @default("PENDING") // PENDING, APPROVED, REJECTED, EXPIRED
+  reviewedById        String?
+  reviewedAt          DateTime?
+  rejectionReason     String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  workplace           Workplace          @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  attendanceSession   AttendanceSession  @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
+  employeeMember      WorkplaceMember    @relation(fields: [employeeMemberId], references: [id], onDelete: Cascade)
+  user                User               @relation("UserAttendanceRequests", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy          User?              @relation("ReviewedAttendanceRequests", fields: [reviewedById], references: [id], onDelete: SetNull)
+  attendanceRecords   Attendance[]
+
+  @@unique([workplaceId, employeeMemberId, attendanceDate, requestType])
+  @@index([workplaceId, status, requestedAt])
+  @@map("attendance_requests")
+}
+
+model NotificationOutbox {
+  id            String    @id @default(cuid())
+  eventId       String    @unique
+  recipientId   String
+  workplaceId   String
+  kind          String
+  title         String
+  body          String
+  data          Json?
+  status        String    @default("PENDING") // PENDING, SENT, FAILED
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  recipient     User      @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  workplace     Workplace @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@map("notification_outboxes")
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  workplaceId String
+  actorId     String
+  action      String
+  entityId    String
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  workplace   Workplace @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
+  actor       User      @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([workplaceId, createdAt])
+  @@map("audit_logs")
+}

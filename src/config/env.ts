@@ -7,7 +7,9 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 const envSchema = z.object({
   PORT: z.coerce.number().default(5001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
+  POSTGRES_URL: z.string().optional().default(process.env.POSTGRES_URL || process.env.DATABASE_URL || ''),
+  DATABASE_URL: z.string().optional().default(process.env.DATABASE_URL || process.env.POSTGRES_URL || ''),
+  MONGODB_URI: z.string().optional().default(''),
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
   JWT_ACCESS_EXPIRY: z.string().default('15m'),
@@ -29,7 +31,9 @@ if (!parsedEnv.success) {
   envData = {
     PORT: Number(process.env.PORT) || 5001,
     NODE_ENV: (process.env.NODE_ENV as any) || 'development',
-    MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/attendance-tracker',
+    POSTGRES_URL: process.env.POSTGRES_URL || process.env.DATABASE_URL || '',
+    DATABASE_URL: process.env.DATABASE_URL || process.env.POSTGRES_URL || '',
+    MONGODB_URI: process.env.MONGODB_URI || '',
     JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
     JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'fallback_dummy_secret_for_diagnostics_minimum_32_chars',
     JWT_ACCESS_EXPIRY: process.env.JWT_ACCESS_EXPIRY || '15m',

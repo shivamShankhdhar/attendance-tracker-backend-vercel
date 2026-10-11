@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from './errorHandler';
 import { WorkplaceMemberModel, IWorkplaceMember } from '../modules/employee/workplace-member.model';
 import { WorkplaceModel, IWorkplace } from '../modules/workplace/workplace.model';
-import mongoose from 'mongoose';
 
 declare global {
   namespace Express {
@@ -24,8 +23,9 @@ export function requireWorkplaceMember() {
       }
 
       // Extract workplaceId from params, query, or body
-      const workplaceId = req.params.workplaceId || req.query.workplaceId || req.body.workplaceId;
-      if (!workplaceId || !mongoose.Types.ObjectId.isValid(workplaceId as string)) {
+      const rawWp = req.params.workplaceId || req.query.workplaceId || req.body.workplaceId;
+      const workplaceId = typeof rawWp === 'string' ? rawWp.trim() : Array.isArray(rawWp) ? rawWp[0] : '';
+      if (!workplaceId) {
         throw new AppError('Valid workplace ID is required', 400, 'INVALID_WORKPLACE_ID');
       }
 

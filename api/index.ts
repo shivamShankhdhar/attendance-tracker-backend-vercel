@@ -39,7 +39,7 @@ const handler = async (req: any, res: any) => {
         error: {
           code: 'DATABASE_ERROR',
           message: error?.message || 'Database connection error',
-          help: 'Please verify that MONGODB_URI is set in Vercel Environment Variables and Network Access is allowed in MongoDB Atlas.',
+          help: 'Please verify that POSTGRES_URL is set in Vercel Environment Variables and Network Access is allowed in Neon PostgreSQL.',
         },
       });
     }

@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { Types } from '../../config/prisma-compat';
 import { AttendanceModel, IAttendance, AttendanceStatus } from './attendance.model';
 import { AttendanceRequestModel } from '../attendance-request/attendance-request.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';

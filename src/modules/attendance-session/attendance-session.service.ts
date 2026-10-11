@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { Types } from '../../config/prisma-compat';
 import { AttendanceSessionModel, IAttendanceSession } from './attendance-session.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
 import { AuditLogModel } from '../audit/audit.model';

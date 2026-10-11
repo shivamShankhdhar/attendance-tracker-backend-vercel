@@ -5,11 +5,17 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && cp public/index.html dist/index.html",
+    "build": "prisma generate && tsc && cp public/index.html dist/index.html",
+    "build:lambda": "esbuild src/lambda.ts --bundle --platform=node --target=node20 --outfile=dist/lambda/index.js --external:mongodb-memory-server",
+    "package:lambda": "npm run build:lambda && (cd dist/lambda && zip -q -r ../lambda.zip index.js*) && echo 'Package created: dist/lambda.zip'",
+    "postinstall": "prisma generate",
     "start": "node dist/server.js",
     "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
+    "@codegenie/serverless-express": "^5.0.0",
+    "@prisma/client": "6.4.1",
+    "@types/nodemailer": "^8.0.2",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -19,10 +25,10 @@
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
     "nodemailer": "^10.0.13",
-    "@types/nodemailer": "^8.0.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.164",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
@@ -30,7 +36,9 @@
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.10.7",
     "@types/nodemailer": "^8.0.2",
+    "esbuild": "^0.28.2",
     "mongodb-memory-server": "^11.3.0",
+    "prisma": "6.4.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

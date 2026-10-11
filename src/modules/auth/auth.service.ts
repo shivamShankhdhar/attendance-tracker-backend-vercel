@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { Types } from 'mongoose';
+import { Types } from '../../config/prisma-compat';
 import { OAuth2Client } from 'google-auth-library';
 import { UserModel, IUser } from './user.model';
 import { MpinOtpModel } from './mpin-otp.model';

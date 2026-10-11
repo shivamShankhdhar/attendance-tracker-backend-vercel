@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { Types } from '../../config/prisma-compat';
 import { WorkplaceMemberModel, IWorkplaceMember } from './workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';
 import { TeamModel } from '../team/team.model';

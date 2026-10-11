@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Types } from 'mongoose';
+import { Types } from '../../config/prisma-compat';
 import { TeamModel, ITeam } from './team.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { WorkplaceModel } from '../workplace/workplace.model';

@@ -49,6 +49,45 @@ export function errorHandler(
     return;
   }
 
+  // Handle Prisma / PostgreSQL duplicate key error (P2002)
+  if (err.code === 'P2002') {
+    const target = Array.isArray(err.meta?.target) ? err.meta.target.join(', ') : err.meta?.target || 'field';
+    res.status(409).json({
+      success: false,
+      error: {
+        code: 'DUPLICATE_ENTRY',
+        message: `An entry with this ${target} already exists.`,
+        details: err.meta,
+      },
+    });
+    return;
+  }
+
+  // Handle Prisma Foreign Key violation (P2003)
+  if (err.code === 'P2003') {
+    res.status(400).json({
+      success: false,
+      error: {
+        code: 'FOREIGN_KEY_VIOLATION',
+        message: 'A related database entity was not found or violates foreign key constraints.',
+        details: err.meta,
+      },
+    });
+    return;
+  }
+
+  // Handle Prisma record not found (P2025)
+  if (err.code === 'P2025') {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: err.meta?.cause || 'Requested record was not found.',
+      },
+    });
+    return;
+  }
+
   // Handle Mongoose duplicate key error (E11000)
   if (err.code === 11000) {
     const keys = Object.keys(err.keyValue || {});

@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { env } from '../../config/env';
 import { createDeferredInviteLink } from './workplace-links';
 import { NotificationOutboxModel } from '../notification/notification.model';
-import { Types, connection } from 'mongoose';
+import { Types, connection } from '../../config/prisma-compat';
 import { WorkplaceModel } from './workplace.model';
 import { WorkplaceMemberModel } from '../employee/workplace-member.model';
 import { TeamModel } from '../team/team.model';
@@ -1058,7 +1058,7 @@ export class WorkplaceService {
         data: { type: 'JOIN_APPROVED', requestId: joinReq._id.toString(), workplaceId } }], { session });
       await AuditLogModel.create([{ workplaceId, actorId, action: 'JOIN_REQUEST_APPROVED', entityId: joinReq._id.toString(),
         metadata: { userId: joinReq.userId.toString(), employeeCode: code } }], { session });
-      return { message: 'Join request approved successfully', memberId: member._id.toString(), employeeCode: member.employeeCode, name: member.name };
+      return { message: 'Join request approved successfully', memberId: member!._id.toString(), employeeCode: member!.employeeCode, name: member!.name };
     });
   }
 
