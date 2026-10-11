@@ -1151,6 +1151,7 @@ export class WorkplaceService {
     }
 
     const requests = await WorkplaceJoinRequestModel.find(filter)
+      .populate('teamId', 'name teamCode color')
       .sort({ createdAt: -1 });
 
     return requests.map((r: any) => ({
@@ -1162,6 +1163,9 @@ export class WorkplaceService {
       avatarUrl: r.avatarUrl,
       note: r.note,
       status: r.status,
+      teamId: r.teamId?._id ? r.teamId._id.toString() : (r.teamId ? r.teamId.toString() : null),
+      teamName: r.teamId?.name || null,
+      teamCode: r.teamId?.teamCode || null,
       requestedAt: r.createdAt,
       reviewedAt: r.reviewedAt,
       rejectionReason: r.rejectionReason,
