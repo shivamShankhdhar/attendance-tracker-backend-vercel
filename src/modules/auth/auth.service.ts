@@ -165,16 +165,39 @@ export class AuthService {
     // Inviting an employee via email requires no employer approval!
     if (email) {
       await WorkplaceMemberModel.updateMany(
-        { invitedEmail: email.toLowerCase(), status: 'INVITED' },
+        {
+          invitedEmail: { $regex: new RegExp(`^${email.toLowerCase()}$`, 'i') },
+          status: { $ne: 'INACTIVE' },
+        },
         { $set: { userId: user._id, status: 'ACTIVE', joinedAt: new Date() } }
       );
     }
 
-    // Check if user has any memberships
-    const userMemberships = await WorkplaceMemberModel.find({
-      userId: user._id,
-      status: { $in: ['ACTIVE', 'INVITED'] },
+    // Auto-heal employer membership for any workplaces owned by this user
+    const ownedWps = await WorkplaceModel.find({
+      ownerId: user._id,
+      status: 'ACTIVE',
     });
+    for (const ow of ownedWps) {
+      const existingMember = await WorkplaceMemberModel.findOne({
+        workplaceId: ow._id,
+        userId: user._id,
+      });
+      if (!existingMember) {
+        await WorkplaceMemberModel.create({
+          workplaceId: ow._id,
+          userId: user._id,
+          role: 'EMPLOYER',
+          name: user.name || 'Admin',
+          status: 'ACTIVE',
+          joinedAt: new Date(),
+        });
+      } else if (existingMember.status !== 'ACTIVE' || existingMember.role !== 'EMPLOYER') {
+        existingMember.status = 'ACTIVE';
+        existingMember.role = 'EMPLOYER';
+        await existingMember.save();
+      }
+    }
 
     // Do not auto-provision workplace. First-time users will choose whether to Create or Join a workplace.
 
@@ -284,43 +307,23 @@ export class AuthService {
     const wpIdStr = wpId.toString();
     const wpName = workplace?.name || (member.workplaceId as any)?.name || 'Workplace';
 
-    // If membership is not ACTIVE yet, it requires admin approval
+    // Since employee entered the valid PIN, automatically activate membership and resolve any join requests
     if (member.status !== 'ACTIVE') {
-      let joinReq = await WorkplaceJoinRequestModel.findOne({
+      member.status = 'ACTIVE';
+    }
+    member.joinedAt = member.joinedAt || new Date();
+    await member.save();
+
+    await WorkplaceJoinRequestModel.updateMany(
+      {
         workplaceId: wpId,
         $or: [
           { userId: user._id, status: 'PENDING' },
           { employeeCode: member.employeeCode, status: 'PENDING' },
         ],
-      });
-
-      if (!joinReq) {
-        joinReq = await WorkplaceJoinRequestModel.create({
-          workplaceId: wpId,
-          userId: user._id,
-          employeeCode: member.employeeCode,
-          name: member.name,
-          email: member.invitedEmail || '',
-          note: `Employee ID + PIN login request (${member.employeeCode})`,
-          status: 'PENDING',
-        });
-      }
-
-      return {
-        pendingApproval: true,
-        status: 'PENDING',
-        workplaceId: wpIdStr,
-        workplaceName: wpName,
-        employeeCode: member.employeeCode,
-        employeeName: member.name,
-        requestId: joinReq._id.toString(),
-        requestedAt: joinReq.createdAt,
-        message: 'Your login request has been submitted to your workplace admin for approval.',
-      };
-    }
-
-    member.joinedAt = member.joinedAt || new Date();
-    await member.save();
+      },
+      { $set: { status: 'APPROVED' } }
+    );
 
     return this.buildAuthSession(user, wpIdStr, member.role);
   }

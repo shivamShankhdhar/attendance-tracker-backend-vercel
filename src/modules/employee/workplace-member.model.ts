@@ -107,7 +107,7 @@ export const WorkplaceMemberModel = {
       }
 
       if (filter.$or) {
-        where.OR = filter.$or.map((o: any) => {
+        const mappedOr = filter.$or.map((o: any) => {
           const item: any = {};
           if (o.userId) item.userId = toId(o.userId);
           if (o.invitedEmail) item.invitedEmail = typeof o.invitedEmail === 'string' ? o.invitedEmail.toLowerCase() : undefined;
@@ -115,7 +115,10 @@ export const WorkplaceMemberModel = {
           if (o.invitationTokenHash) item.invitationTokenHash = o.invitationTokenHash;
           if (o.employeeCode) item.employeeCode = o.employeeCode;
           return item;
-        });
+        }).filter((item: any) => Object.keys(item).length > 0);
+        if (mappedOr.length > 0) {
+          where.OR = mappedOr;
+        }
       }
 
       let orderBy: any = { createdAt: 'desc' };
@@ -237,7 +240,16 @@ export const WorkplaceMemberModel = {
   async updateMany(filter: any, update: any) {
     const where: any = {};
     if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
-    if (filter.invitedEmail) where.invitedEmail = filter.invitedEmail.toLowerCase();
+    if (filter.invitedEmail) {
+      if (typeof filter.invitedEmail === 'string') {
+        where.invitedEmail = filter.invitedEmail.toLowerCase();
+      } else if (filter.invitedEmail.$regex) {
+        const pattern = filter.invitedEmail.$regex instanceof RegExp
+          ? filter.invitedEmail.$regex.source.replace(/^\^|\$$/g, '').toLowerCase()
+          : String(filter.invitedEmail.$regex).replace(/^\^|\$$/g, '').toLowerCase();
+        where.invitedEmail = { equals: pattern, mode: 'insensitive' };
+      }
+    }
     if (filter.status) where.status = filter.status;
     if (filter.teamId) where.teamId = toId(filter.teamId);
 

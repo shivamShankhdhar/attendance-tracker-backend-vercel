@@ -122,13 +122,17 @@ export const WorkplaceModel = {
       if (filter.status) where.status = filter.status;
 
       if (filter.$or) {
-        where.OR = filter.$or.map((o: any) => {
+        const mappedOr = filter.$or.map((o: any) => {
           const item: any = {};
           if (o.workplaceCode) item.workplaceCode = o.workplaceCode;
           if (o.code) item.workplaceCode = o.code;
+          if (o.joinInviteToken) item.joinInviteToken = o.joinInviteToken;
           if (o._id) item.id = toId(o._id);
           return item;
-        });
+        }).filter((item: any) => Object.keys(item).length > 0);
+        if (mappedOr.length > 0) {
+          where.OR = mappedOr;
+        }
       }
 
       const wp = await prisma.workplace.findFirst({
@@ -191,6 +195,7 @@ export const WorkplaceModel = {
     if (setVals.joinShareUrl !== undefined) data.joinShareUrl = setVals.joinShareUrl;
     if (setVals.joinInviteToken !== undefined) data.joinInviteToken = setVals.joinInviteToken;
     if (setVals.joinInviteExpiresAt !== undefined) data.joinInviteExpiresAt = setVals.joinInviteExpiresAt;
+    if (setVals.joinQrEnabled !== undefined) data.joinQrEnabled = setVals.joinQrEnabled;
     if (setVals.wifiSsid !== undefined) data.wifiSsid = setVals.wifiSsid;
     if (setVals.name !== undefined) data.name = setVals.name;
     if (setVals.attendanceSettings) {
