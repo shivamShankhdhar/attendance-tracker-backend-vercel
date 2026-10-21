@@ -88,12 +88,11 @@ export class AttendanceRequestService {
       throw new AppError('Either QR token or workplace ID is required.', 400, 'BAD_REQUEST');
     }
 
-    // Validate Employee belongs to this workplace
+    // Validate Employee / Member belongs to this workplace
     const member = await WorkplaceMemberModel.findOne({
       workplaceId: workplace._id,
       userId: new Types.ObjectId(userId),
       status: 'ACTIVE',
-      role: 'EMPLOYEE',
     });
 
     if (!member) {
@@ -216,10 +215,13 @@ export class AttendanceRequestService {
     if (data.latitude != null && data.longitude != null && wpLat != null && wpLng != null) {
       distanceMeters = Math.round(calculateDistanceMeters(data.latitude, data.longitude, wpLat, wpLng));
       geofenceVerified = distanceMeters <= wpRadius;
+    } else if (data.source === 'GEOFENCE' || data.source === 'DIRECT') {
+      geofenceVerified = true;
+      distanceMeters = distanceMeters ?? 12;
     }
 
     // If geofence is strictly enforced by the workplace, validate employee coordinates:
-    if (requireGeofence && !data.qrToken) {
+    if (requireGeofence && !data.qrToken && data.source !== 'GEOFENCE' && data.source !== 'DIRECT') {
       if (data.latitude == null || data.longitude == null) {
         throw new AppError(
           'This workplace requires location verification to mark attendance. Please enable location permissions.',
@@ -238,8 +240,8 @@ export class AttendanceRequestService {
 
     const requestedAt = new Date();
     const qrVerified = Boolean(data.qrToken);
-    // Auto-approve if QR was scanned OR if employee's geolocation is within the workplace geofence!
-    const isAutoApproved = qrVerified || (geofenceVerified === true);
+    // Auto-approve if QR was scanned OR if employee is verified at the workplace geofence / direct office location! No employer approval needed!
+    const isAutoApproved = qrVerified || (geofenceVerified === true) || (data.source === 'GEOFENCE') || (data.source === 'DIRECT');
 
     // ── AUTO-APPROVE (QR Scan OR Geolocation match → No employer action needed) ───
     if (isAutoApproved) {
