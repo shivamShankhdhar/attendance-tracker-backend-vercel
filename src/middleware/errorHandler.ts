@@ -132,7 +132,8 @@ export function errorHandler(
     success: false,
     error: {
       code: 'INTERNAL_SERVER_ERROR',
-      message: process.env.NODE_ENV === 'production' ? 'An unexpected error occurred.' : err.message,
+      message: err.message || 'An unexpected error occurred.',
+      details: err.name,
     },
   });
 }
