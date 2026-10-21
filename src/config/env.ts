@@ -53,6 +53,8 @@ export const env = envData;
 const KNOWN_GOOGLE_CLIENT_IDS = [
   '667573150359-4cff25jgf98hqq00pdrnojslk4bri5sb.apps.googleusercontent.com',
   '771745956735-dt868k5lrced43dicn5ifeh54la1djc7.apps.googleusercontent.com',
+  '250292577680-qqqlctk88cl0ngvhpkuaauqgb1nn8s1p.apps.googleusercontent.com',
+  '250292577680-of15bfmbm0nln8fhq43h9sq8fovijuau.apps.googleusercontent.com',
 ];
 
 export const googleClientIds = Array.from(
@@ -63,3 +65,4 @@ export const googleClientIds = Array.from(
       : []),
   ])
 );
+
