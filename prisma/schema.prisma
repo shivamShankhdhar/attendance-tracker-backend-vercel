@@ -11,7 +11,7 @@ datasource db {
 }
 
 model User {
-  id                  String    @id @default(cuid())
+  id                  String    @id @default(uuid())
   name                String
   email               String?   @unique
   phone               String?   @unique
@@ -48,7 +48,7 @@ model User {
 }
 
 model MpinOtp {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid())
   userId     String
   email      String
   otpHash    String
@@ -68,7 +68,7 @@ model MpinOtp {
 }
 
 model Workplace {
-  id                       String    @id @default(cuid())
+  id                       String    @id @default(uuid())
   name                     String
   workplaceCode            String?   @unique
   ownerId                  String
@@ -111,7 +111,7 @@ model Workplace {
 }
 
 model Team {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid())
   workplaceId String
   name        String
   teamCode    String?  @unique
@@ -131,7 +131,7 @@ model Team {
 }
 
 model WorkplaceMember {
-  id                  String    @id @default(cuid())
+  id                  String    @id @default(uuid())
   workplaceId         String
   userId              String?
   teamId              String?
@@ -166,7 +166,7 @@ model WorkplaceMember {
 }
 
 model WorkplaceJoinRequest {
-  id              String    @id @default(cuid())
+  id              String    @id @default(uuid())
   workplaceId     String
   userId          String
   teamId          String?
@@ -195,7 +195,7 @@ model WorkplaceJoinRequest {
 }
 
 model AttendanceSession {
-  id               String              @id @default(cuid())
+  id               String              @id @default(uuid())
   workplaceId      String
   createdById      String
   attendanceDate   String              // 'YYYY-MM-DD'
@@ -217,7 +217,7 @@ model AttendanceSession {
 }
 
 model Attendance {
-  id                  String             @id @default(cuid())
+  id                  String             @id @default(uuid())
   workplaceId         String
   employeeMemberId    String
   userId              String?
@@ -250,7 +250,7 @@ model Attendance {
 }
 
 model AttendanceRequest {
-  id                  String             @id @default(cuid())
+  id                  String             @id @default(uuid())
   workplaceId         String
   attendanceSessionId String
   employeeMemberId    String
@@ -283,7 +283,7 @@ model AttendanceRequest {
 }
 
 model NotificationOutbox {
-  id            String    @id @default(cuid())
+  id            String    @id @default(uuid())
   eventId       String    @unique
   recipientId   String
   workplaceId   String
@@ -306,7 +306,7 @@ model NotificationOutbox {
 }
 
 model AuditLog {
-  id          String    @id @default(cuid())
+  id          String    @id @default(uuid())
   workplaceId String
   actorId     String
   action      String

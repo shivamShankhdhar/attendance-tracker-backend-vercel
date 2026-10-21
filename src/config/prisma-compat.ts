@@ -1,4 +1,18 @@
+import crypto from 'node:crypto';
 import { prisma } from './database';
+
+export function ensureUuid(val?: any): string {
+  if (!val) return crypto.randomUUID();
+  const str = toId(val);
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(str)) return str;
+  try {
+    const hash = crypto.createHash('md5').update(str).digest('hex');
+    return `${hash.substring(0, 8)}-${hash.substring(8, 12)}-4${hash.substring(13, 16)}-a${hash.substring(17, 20)}-${hash.substring(20, 32)}`;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
 
 export function toId(val: any): string {
   if (!val) return '';
@@ -8,6 +22,7 @@ export function toId(val: any): string {
   if (typeof val.toString === 'function') return val.toString();
   return String(val);
 }
+
 
 export class ObjectIdCompat {
   private __idStr: string;

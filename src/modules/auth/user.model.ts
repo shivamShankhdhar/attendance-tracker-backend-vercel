@@ -1,5 +1,5 @@
 import { prisma } from '../../config/database';
-import { createDocProxy, toId, QueryBuilder, SingleQueryBuilder, ObjectIdCompat } from '../../config/prisma-compat';
+import { createDocProxy, toId, ensureUuid, QueryBuilder, SingleQueryBuilder, ObjectIdCompat } from '../../config/prisma-compat';
 
 export interface IUser {
   _id: any;
@@ -108,7 +108,7 @@ export const UserModel = {
   async create(data: any): Promise<IUser> {
     const created = await prisma.user.create({
       data: {
-        ...(data._id ? { id: toId(data._id) } : {}),
+        id: ensureUuid(data.id || data._id),
         name: data.name,
         email: data.email ? data.email.toLowerCase() : null,
         phone: data.phone || null,
