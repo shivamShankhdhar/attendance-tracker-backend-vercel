@@ -1,5 +1,28 @@
+import fs from 'fs';
+import path from 'path';
 import { app } from '../src/app';
 import { connectDatabase } from '../src/config/database';
+
+let cachedHtml: string | null = null;
+function getIndexHtml(): string {
+  if (cachedHtml) return cachedHtml;
+  try {
+    const candidates = [
+      path.join(process.cwd(), 'public', 'index.html'),
+      path.join(__dirname, '..', 'public', 'index.html'),
+      path.join(__dirname, 'public', 'index.html'),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        cachedHtml = fs.readFileSync(p, 'utf-8');
+        return cachedHtml;
+      }
+    }
+  } catch (err) {
+    console.warn('[Vercel Static Error] Could not read public/index.html:', err);
+  }
+  return '';
+}
 
 const handler = async (req: any, res: any) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -14,9 +37,29 @@ const handler = async (req: any, res: any) => {
     return res.status(200).end();
   }
 
-  const url = req.url || '';
+  const url = (req.url || '').split('?')[0];
+  const acceptHeader = (req.headers && req.headers['accept']) || '';
 
-  if (url === '/' || url === '' || url === '/api' || url === '/api/') {
+  if (url === '/' || url === '' || url === '/index.html') {
+    if (acceptHeader.includes('text/html') || !acceptHeader.includes('application/json')) {
+      const html = getIndexHtml();
+      if (html) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).send(html);
+      }
+    }
+    return res.status(200).json({
+      status: 'healthy',
+      name: 'Bizora Attendance Tracker API',
+      message: 'All systems operational',
+      database: 'PostgreSQL (Neon) via Prisma ORM',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV || 'production',
+    });
+  }
+
+  if (url === '/api' || url === '/api/') {
     return res.status(200).json({
       status: 'healthy',
       name: 'Bizora Attendance Tracker API',

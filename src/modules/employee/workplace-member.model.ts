@@ -174,6 +174,7 @@ export const WorkplaceMemberModel = {
       if (filter.status) {
         if (typeof filter.status === 'string') where.status = filter.status;
         else if (filter.status.$in) where.status = { in: filter.status.$in };
+        else if (filter.status.$ne) where.status = { not: filter.status.$ne };
       }
 
       if (filter.$or) {
@@ -250,7 +251,15 @@ export const WorkplaceMemberModel = {
         where.invitedEmail = { equals: pattern, mode: 'insensitive' };
       }
     }
-    if (filter.status) where.status = filter.status;
+    if (filter.status) {
+      if (typeof filter.status === 'string') {
+        where.status = filter.status;
+      } else if (filter.status.$ne) {
+        where.status = { not: filter.status.$ne };
+      } else if (filter.status.$in) {
+        where.status = { in: filter.status.$in };
+      }
+    }
     if (filter.teamId) where.teamId = toId(filter.teamId);
 
     const data: any = {};

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -23,14 +25,39 @@ if (env.NODE_ENV !== 'test') {
   app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 }
 
-// Root and health check endpoints (for Vercel, monitors, load balancers)
-app.get(['/', '/health'], (req: Request, res: Response) => {
+// Root deployment dashboard & health check
+app.get(['/', '/index.html'], (req: Request, res: Response) => {
+  const acceptHeader = (req.headers && req.headers['accept']) || '';
+  if (acceptHeader.includes('text/html') || !acceptHeader.includes('application/json')) {
+    const candidates = [
+      path.join(process.cwd(), 'public', 'index.html'),
+      path.join(__dirname, '..', 'public', 'index.html'),
+      path.join(__dirname, 'public', 'index.html'),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) {
+        return res.sendFile(p);
+      }
+    }
+  }
   res.status(200).json({
     status: 'healthy',
     name: env.APP_NAME || 'Bizora Attendance Tracker API',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     env: env.NODE_ENV,
+    database: 'PostgreSQL (Neon) via Prisma ORM',
+  });
+});
+
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'healthy',
+    name: env.APP_NAME || 'Bizora Attendance Tracker API',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    env: env.NODE_ENV,
+    database: 'PostgreSQL (Neon) via Prisma ORM',
   });
 });
 
