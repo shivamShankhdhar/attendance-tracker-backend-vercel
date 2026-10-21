@@ -38,6 +38,9 @@ export async function ensureSchema(): Promise<void> {
       "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
     );`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT '';`,
+    `ALTER TABLE users ALTER COLUMN display_name DROP NOT NULL;`,
+    `ALTER TABLE users ALTER COLUMN display_name SET DEFAULT '';`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS "avatarUrl" TEXT;`,
