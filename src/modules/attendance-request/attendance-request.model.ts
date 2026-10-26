@@ -2,7 +2,7 @@ import { prisma } from '../../config/database';
 import { createDocProxy, toId, createPopulatedRef, QueryBuilder, SingleQueryBuilder } from '../../config/prisma-compat';
 
 export type RequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
-export type AttendanceRequestType = 'CHECK_IN' | 'CHECK_OUT';
+export type AttendanceRequestType = 'CHECK_IN' | 'CHECK_OUT' | 'MISSED_PUNCH' | 'MISSED_CHECK_OUT' | 'CASUAL_LEAVE' | 'SICK_LEAVE' | 'PAID_LEAVE';
 
 export interface IAttendanceRequest {
   _id: any;
@@ -14,6 +14,8 @@ export interface IAttendanceRequest {
   attendanceDate: string; // 'YYYY-MM-DD'
   requestedAt: Date;
   requestType: AttendanceRequestType;
+  note?: string;
+  proposedTime?: string;
   verification: {
     qrVerified: boolean;
     wifiVerified: boolean | null;
@@ -154,6 +156,8 @@ export const AttendanceRequestModel = {
         attendanceDate: data.attendanceDate,
         requestedAt: data.requestedAt || new Date(),
         requestType: data.requestType || 'CHECK_IN',
+        note: data.note || null,
+        proposedTime: data.proposedTime || null,
         qrVerified: v.qrVerified ?? false,
         wifiVerified: v.wifiVerified ?? null,
         geofenceVerified: v.geofenceVerified ?? null,

@@ -28,6 +28,14 @@ export class AttendanceRequestController {
     }
   }
 
+  async getMyRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const requests = await attendanceRequestService.getMyRequests(getParam(req, 'workplaceId'), req.user.userId);
+      res.status(200).json({ success: true, data: requests });
+    } catch (error) { next(error); }
+  }
+
   async getMyTodayRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');

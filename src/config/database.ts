@@ -210,6 +210,9 @@ export async function ensureSchema(): Promise<void> {
       "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
     );`,
 
+    `ALTER TABLE attendance_requests ADD COLUMN IF NOT EXISTS note TEXT;`,
+    `ALTER TABLE attendance_requests ADD COLUMN IF NOT EXISTS "proposedTime" TEXT;`,
+
     `CREATE TABLE IF NOT EXISTS notification_outboxes (
       id TEXT PRIMARY KEY,
       "eventId" TEXT UNIQUE NOT NULL,

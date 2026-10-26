@@ -257,7 +257,9 @@ model AttendanceRequest {
   userId              String
   attendanceDate      String             // 'YYYY-MM-DD'
   requestedAt         DateTime
-  requestType         String             @default("CHECK_IN") // CHECK_IN, CHECK_OUT
+  requestType         String             @default("CHECK_IN") // punches, corrections, and leave
+  note                String?
+  proposedTime        String?
   qrVerified          Boolean            @default(false)
   wifiVerified        Boolean?
   geofenceVerified    Boolean?

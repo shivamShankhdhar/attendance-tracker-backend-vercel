@@ -25,6 +25,8 @@ attendanceRequestRouter.post(
   attendanceRequestController.submitRequest
 );
 
+attendanceRequestRouter.get('/:workplaceId/attendance/requests/mine', requireWorkplaceMember(), attendanceRequestController.getMyRequests);
+
 // Employee gets their own request for today
 attendanceRequestRouter.get(
   '/:workplaceId/attendance/requests/my-today',

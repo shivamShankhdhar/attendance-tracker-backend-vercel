@@ -1,3 +1,5 @@
+import { prisma } from '../../config/database';
+import { localRequestInstant } from './request-time';
 import { Types } from '../../config/prisma-compat';
 import { AttendanceRequestModel, IAttendanceRequest } from './attendance-request.model';
 import { AttendanceSessionModel } from '../attendance-session/attendance-session.model';
@@ -26,10 +28,88 @@ function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2:
 }
 
 export class AttendanceRequestService {
+
+  async submitManualRequest(userId: string, data: { workplaceId?: string; requestType?: string; attendanceDate?: string; proposedTime?: string; note?: string }) {
+    const workplace = await prisma.workplace.findUnique({ where: { id: data.workplaceId || '' } });
+    if (!workplace || workplace.status !== 'ACTIVE') throw new AppError('Workplace unavailable', 404, 'WORKPLACE_NOT_FOUND');
+    const member = await prisma.workplaceMember.findFirst({ where: { workplaceId: workplace.id, userId, status: 'ACTIVE', role: 'EMPLOYEE' } });
+    if (!member) throw new AppError('An active employee membership is required', 403, 'NOT_WORKPLACE_EMPLOYEE');
+    const date = data.attendanceDate || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date || !data.note?.trim()) {
+      throw new AppError('Choose a valid date and enter a reason', 400, 'INVALID_REQUEST');
+    }
+    const correction = data.requestType === 'MISSED_PUNCH' || data.requestType === 'MISSED_CHECK_OUT';
+    if (correction) {
+      const instant = localRequestInstant(date, data.proposedTime || '', workplace.timezone);
+      if (instant > new Date()) throw new AppError('A missed punch cannot be in the future', 400, 'FUTURE_CORRECTION');
+    }
+    const requestType = data.requestType!;
+    const key = { workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: date, requestType };
+    const existing = await prisma.attendanceRequest.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate_requestType: key } });
+    if (existing) throw new AppError('A request for this type and date already exists. Check its status below.', 409, 'DUPLICATE_REQUEST');
+    const session = await prisma.attendanceSession.upsert({
+      where: { workplaceId_attendanceDate: { workplaceId: workplace.id, attendanceDate: date } }, update: {},
+      create: { workplaceId: workplace.id, attendanceDate: date, createdById: workplace.ownerId,
+        qrTokenHash: hashToken(generateSecureToken(32)), encryptedQrToken: encryptToken(generateSecureToken(32)), status: 'CLOSED', openedAt: new Date(), expiresAt: new Date() },
+    });
+    const request = await prisma.attendanceRequest.create({ data: {
+      ...key, userId, attendanceSessionId: session.id, requestedAt: new Date(), status: 'PENDING',
+      note: data.note.trim(), proposedTime: correction ? data.proposedTime : null,
+    } });
+    return { request, message: 'Request submitted' };
+  }
+
+  async getMyRequests(workplaceId: string, userId: string) {
+    const member = await prisma.workplaceMember.findFirst({ where: { workplaceId, userId, status: 'ACTIVE' } });
+    if (!member) throw new AppError('Active membership required', 403, 'NOT_WORKPLACE_EMPLOYEE');
+    const rows = await prisma.attendanceRequest.findMany({ where: { workplaceId, employeeMemberId: member.id }, orderBy: { requestedAt: 'desc' }, take: 200 });
+    return rows.map(r => ({ ...r, employee: { memberId: member.id, name: member.name, code: member.employeeCode } }));
+  }
+
+  async approveManualRequest(workplaceId: string, requestId: string, employerUserId: string) {
+    return prisma.$transaction(async tx => {
+      const req = await tx.attendanceRequest.findUnique({ where: { id: requestId } });
+      if (!req || req.workplaceId !== workplaceId) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
+      if (req.status !== 'PENDING') throw new AppError('Request has already been reviewed', 409, 'REQUEST_REVIEWED');
+      const workplace = await tx.workplace.findUniqueOrThrow({ where: { id: workplaceId } });
+      const key = { workplaceId, employeeMemberId: req.employeeMemberId, attendanceDate: req.attendanceDate };
+      const existing = await tx.attendance.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate: key } });
+      const leave = req.requestType.endsWith('_LEAVE');
+      let patch: any;
+      if (leave) {
+        if (existing?.checkInTime || existing?.checkOutTime) throw new AppError('This date already has attendance. Review it before approving leave.', 409, 'ATTENDANCE_CONFLICT');
+        patch = { status: 'LEAVE', checkInTime: null, checkOutTime: null };
+      } else {
+        const instant = localRequestInstant(req.attendanceDate, req.proposedTime || '', workplace.timezone);
+        if (req.requestType === 'MISSED_CHECK_OUT') {
+          if (!existing?.checkInTime || instant < existing.checkInTime) throw new AppError('Check-out must follow a recorded check-in', 400, 'INVALID_CHECK_OUT');
+          if (existing.checkOutTime) throw new AppError('A check-out is already recorded for this date', 409, 'ATTENDANCE_CONFLICT');
+          patch = { status: 'PRESENT', checkOutTime: instant };
+        } else {
+          if (existing?.checkInTime) throw new AppError('A check-in is already recorded for this date', 409, 'ATTENDANCE_CONFLICT');
+          if (existing?.checkOutTime && instant > existing.checkOutTime) throw new AppError('Check-in must precede check-out', 400, 'INVALID_CHECK_IN');
+          patch = { status: 'PRESENT', checkInTime: instant };
+        }
+      }
+      const updated = await tx.attendanceRequest.updateMany({ where: { id: requestId, status: 'PENDING' }, data: { status: 'APPROVED', reviewedAt: new Date(), reviewedById: employerUserId } });
+      if (updated.count !== 1) throw new AppError('Request was already reviewed', 409, 'REQUEST_REVIEWED');
+      const details = { ...patch, approvedAt: new Date(), approvedById: employerUserId, source: 'MANUAL', correctionReason: req.note, attendanceRequestId: req.id };
+      const attendance = await tx.attendance.upsert({ where: { workplaceId_employeeMemberId_attendanceDate: key },
+        create: { ...key, userId: req.userId, ...details }, update: details });
+      await tx.auditLog.create({ data: { workplaceId, actorId: employerUserId, action: 'ATTENDANCE_REQUEST_APPROVED', entityId: req.id,
+        metadata: { requestType: req.requestType, attendanceDate: req.attendanceDate } } });
+      return { attendance, message: 'Request approved' };
+    });
+  }
+
   /**
    * Employee submits attendance request from QR scan, geolocation, or direct request
    */
-  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'DIRECT' | 'MANUAL' | 'GEOFENCE'; note?: string; requestType?: 'CHECK_IN' | 'CHECK_OUT'; latitude?: number; longitude?: number; accuracy?: number }) {
+  async submitRequest(userId: string, data: { qrToken?: string; workplaceId?: string; deviceSsid?: string; source?: 'QR' | 'DIRECT' | 'MANUAL' | 'GEOFENCE'; note?: string; requestType?: string; attendanceDate?: string; proposedTime?: string; latitude?: number; longitude?: number; accuracy?: number }) {
+    if (['MISSED_PUNCH', 'MISSED_CHECK_OUT', 'CASUAL_LEAVE', 'SICK_LEAVE', 'PAID_LEAVE'].includes(data.requestType || '')) {
+      return this.submitManualRequest(userId, data);
+    }
+    if (data.source === 'MANUAL') throw new AppError('Choose a correction or leave request type.', 400, 'INVALID_MANUAL_REQUEST');
     let session: any = null;
     let workplace: any = null;
     let todayDate: string = '';
@@ -144,7 +224,7 @@ export class AttendanceRequestService {
         requestType: 'CHECK_OUT',
       });
 
-      if (existingReq) {
+      if (existingReq && !data.qrToken && data.source !== 'GEOFENCE' && data.source !== 'DIRECT') {
         return {
           request: {
             id: existingReq._id.toString(),
@@ -186,7 +266,7 @@ export class AttendanceRequestService {
         requestType: 'CHECK_IN',
       });
 
-      if (existingReq) {
+      if (existingReq && !data.qrToken && data.source !== 'GEOFENCE' && data.source !== 'DIRECT') {
         return {
           request: {
             id: existingReq._id.toString(),
@@ -268,24 +348,15 @@ export class AttendanceRequestService {
     // ── AUTO-APPROVE (QR Scan OR Geolocation match → No employer action needed) ───
     if (isAutoApproved) {
       const source = geofenceVerified ? 'GEOFENCE' : 'QR_SCAN';
-      const request = await AttendanceRequestModel.create({
-        workplaceId: workplace._id,
-        attendanceSessionId: session._id,
-        employeeMemberId: member._id,
-        userId: new Types.ObjectId(userId),
-        attendanceDate: todayDate,
-        requestedAt,
-        requestType,
-        verification: {
-          qrVerified,
-          wifiVerified,
-          geofenceVerified,
-          distanceMeters,
-          deviceSsid: data.deviceSsid,
-        },
-        status: 'APPROVED',
-        reviewedAt: requestedAt,
+      // Reuse a previous pending request after fresh location verification.
+      const key = { workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: todayDate, requestType };
+      const savedRequest = await prisma.attendanceRequest.upsert({
+        where: { workplaceId_employeeMemberId_attendanceDate_requestType: key },
+        create: { ...key, attendanceSessionId: session.id, userId, requestedAt,
+          qrVerified, wifiVerified, geofenceVerified, distanceMeters, status: 'APPROVED', reviewedAt: requestedAt },
+        update: { status: 'APPROVED', requestedAt, reviewedAt: requestedAt, qrVerified, wifiVerified, geofenceVerified, distanceMeters },
       });
+      const request = { ...savedRequest, _id: savedRequest.id, verification: { qrVerified, wifiVerified, geofenceVerified, distanceMeters } };
 
       if (requestType === 'CHECK_OUT') {
         await AttendanceModel.findOneAndUpdate(
@@ -365,6 +436,9 @@ export class AttendanceRequestService {
           geofenceVerified: Boolean(geofenceVerified),
           distanceMeters,
         },
+        attendance: await prisma.attendance.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate: {
+          workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: todayDate,
+        } } }),
         autoApproved: true,
         geofenceVerified: Boolean(geofenceVerified),
         distanceMeters,
@@ -443,9 +517,6 @@ export class AttendanceRequestService {
     if (status) filter.status = status;
     if (date) {
       filter.attendanceDate = date;
-    } else {
-      // Default to today
-      filter.attendanceDate = getWorkplaceLocalDate(new Date(), workplace.timezone);
     }
 
     const requests = await AttendanceRequestModel.find(filter)
@@ -465,6 +536,8 @@ export class AttendanceRequestService {
       requestedAt: req.requestedAt,
       status: req.status,
       requestType: req.requestType || 'CHECK_IN',
+      note: req.note,
+      proposedTime: req.proposedTime,
       employee: {
         memberId: req.employeeMemberId?._id?.toString(),
         name: req.employeeMemberId?.name || 'Employee',
@@ -544,6 +617,9 @@ export class AttendanceRequestService {
       throw new AppError('Request was already rejected and cannot be approved', 400, 'REQUEST_ALREADY_REJECTED');
     }
 
+    if (['MISSED_PUNCH', 'MISSED_CHECK_OUT', 'CASUAL_LEAVE', 'SICK_LEAVE', 'PAID_LEAVE'].includes(request.requestType)) {
+      return this.approveManualRequest(workplaceId, requestId, employerUserId);
+    }
     const now = new Date();
 
     if (request.requestType === 'CHECK_OUT') {
