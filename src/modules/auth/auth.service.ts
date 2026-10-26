@@ -80,71 +80,21 @@ export class AuthService {
     let avatarUrl: string | undefined;
 
     // Verify Google ID token
-    const isDevMock = Boolean(
-      devMockProfile &&
-      (env.NODE_ENV !== 'production' ||
-        idToken.startsWith('dev-') ||
-        idToken === 'dev-token' ||
-        idToken.startsWith('android-') ||
-        idToken.startsWith('google-') ||
-        idToken.startsWith('google_'))
-    );
-
-    if (isDevMock && devMockProfile) {
-      googleSub = devMockProfile.googleSub;
-      email = devMockProfile.email.toLowerCase();
-      name = devMockProfile.name;
-    } else {
-      try {
-        console.log('[AuthService] Verifying Google token with allowed audiences:', googleClientIds);
-        const ticket = await googleClient.verifyIdToken({
-          idToken,
-          audience: googleClientIds.length > 0 ? googleClientIds : undefined,
-        });
-        const payload = ticket.getPayload();
-        if (!payload || !payload.sub) {
-          throw new AppError('Invalid Google token payload', 401, 'INVALID_GOOGLE_TOKEN');
-        }
-        googleSub = payload.sub;
-        email = payload.email?.toLowerCase();
-        name = payload.name || payload.given_name || 'User';
-        avatarUrl = payload.picture;
-      } catch (err: any) {
-        console.error('[AuthService] Primary Google verification failed:', err.message);
-
-        // Fallback: If audience mismatch occurred, verify token signature directly with Google
-        if (err.message && (err.message.includes('payload audience != requiredAudience') || err.message.includes('wrong recipient'))) {
-          try {
-            console.log('[AuthService] Attempting fallback verification without audience restriction...');
-            const fallbackTicket = await googleClient.verifyIdToken({ idToken });
-            const payload = fallbackTicket.getPayload();
-            if (payload && payload.sub) {
-              console.log('[AuthService] Fallback token verification succeeded for aud:', payload.aud);
-              googleSub = payload.sub;
-              email = payload.email?.toLowerCase();
-              name = payload.name || payload.given_name || 'User';
-              avatarUrl = payload.picture;
-            } else {
-              throw err;
-            }
-          } catch (fallbackErr: any) {
-            console.error('[AuthService] Fallback verification also failed:', fallbackErr.message);
-            if (devMockProfile) {
-              googleSub = devMockProfile.googleSub;
-              email = devMockProfile.email.toLowerCase();
-              name = devMockProfile.name;
-            } else {
-              throw new AppError(`Google verification failed: ${err.message}`, 401, 'GOOGLE_AUTH_FAILED');
-            }
-          }
-        } else if (devMockProfile) {
-          googleSub = devMockProfile.googleSub;
-          email = devMockProfile.email.toLowerCase();
-          name = devMockProfile.name;
-        } else {
-          throw new AppError(`Google verification failed: ${err.message}`, 401, 'GOOGLE_AUTH_FAILED');
-        }
+    if (googleClientIds.length === 0) {
+      throw new AppError('Google sign-in audience is not configured', 503, 'AUTH_NOT_CONFIGURED');
+    }
+    try {
+      const ticket = await googleClient.verifyIdToken({ idToken, audience: googleClientIds });
+      const payload = ticket.getPayload();
+      if (!payload?.sub || !payload.email || payload.email_verified !== true) {
+        throw new Error('Verified Google email required');
       }
+      googleSub = payload.sub;
+      email = payload.email.toLowerCase();
+      name = payload.name || payload.given_name || 'User';
+      avatarUrl = payload.picture;
+    } catch {
+      throw new AppError('Google sign-in expired or invalid. Please sign in again.', 401, 'GOOGLE_AUTH_FAILED');
     }
 
     // Upsert or locate user by googleSub
@@ -477,6 +427,7 @@ export class AuthService {
         timezone: wp?.timezone || 'Asia/Kolkata',
         role: m.role,
         employeeCode: m.employeeCode,
+        teamId: m.teamId?.toString(),
         status: m.status,
         allowEmployeeViewHistory,
         attendanceSettings: wp?.attendanceSettings,

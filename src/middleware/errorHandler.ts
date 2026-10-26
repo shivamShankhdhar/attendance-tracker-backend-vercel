@@ -120,7 +120,7 @@ export function errorHandler(
       success: false,
       error: {
         code: err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN',
-        message: err.message || 'Authentication token is invalid or expired.',
+        message: 'Your session is invalid or expired. Please sign in again.',
       },
     });
     return;

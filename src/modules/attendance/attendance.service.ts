@@ -36,7 +36,7 @@ export class AttendanceService {
         workplaceId: workplace._id, role: 'EMPLOYEE', status: { $in: ['ACTIVE', 'INVITED'] },
       }).populate('userId', 'avatarUrl').select('name employeeCode userId').sort({ name: 1 }).lean(),
       AttendanceModel.find({ workplaceId: workplace._id, attendanceDate: todayDate })
-        .select('employeeMemberId status checkInTime checkOutTime approvedAt source').lean(),
+        .select('employeeMemberId status checkInTime checkOutTime approvedAt source verification').lean(),
       AttendanceRequestModel.find({ workplaceId: workplace._id, attendanceDate: todayDate, status: 'PENDING' })
         .select('employeeMemberId requestedAt requestType').lean(),
     ]);
@@ -90,6 +90,7 @@ export class AttendanceService {
         requestId: pendingReq?._id?.toString(),
         requestType: requestType || (pendingReq as any)?.requestType,
         source: attendance?.source,
+        verification: attendance?.verification,
       };
     });
 

@@ -225,15 +225,16 @@ export class AttendanceRequestService {
     let distanceMeters: number | undefined = undefined;
 
     if (data.latitude != null && data.longitude != null && wpLat != null && wpLng != null) {
-      distanceMeters = Math.round(calculateDistanceMeters(data.latitude, data.longitude, wpLat, wpLng));
-      geofenceVerified = distanceMeters <= wpRadius;
-    } else if (data.source === 'GEOFENCE' || data.source === 'DIRECT') {
-      geofenceVerified = true;
-      distanceMeters = distanceMeters ?? 12;
+      const exactDistance = calculateDistanceMeters(data.latitude, data.longitude, wpLat, wpLng);
+      distanceMeters = Math.round(exactDistance);
+      geofenceVerified = exactDistance <= wpRadius;
     }
 
     // If geofence is strictly enforced by the workplace, validate employee coordinates:
-    if (requireGeofence && !data.qrToken && data.source !== 'GEOFENCE' && data.source !== 'DIRECT') {
+    if (requireGeofence || data.source === 'GEOFENCE' || data.source === 'DIRECT') {
+      if (wpLat == null || wpLng == null || !Number.isFinite(wpLat) || !Number.isFinite(wpLng) || !Number.isFinite(wpRadius) || wpRadius <= 0) {
+        throw new AppError('Ask your employer to configure the office location and radius.', 400, 'OFFICE_LOCATION_NOT_CONFIGURED');
+      }
       if (data.latitude == null || data.longitude == null) {
         throw new AppError(
           'This workplace requires location verification to mark attendance. Please enable location permissions.',
@@ -250,10 +251,19 @@ export class AttendanceRequestService {
       }
     }
 
+    if (data.source === 'GEOFENCE' || data.source === 'DIRECT') {
+      if (data.accuracy == null || !Number.isFinite(data.accuracy) || data.accuracy <= 0 || data.accuracy > Math.min(wpRadius, 50)) {
+        throw new AppError('GPS accuracy is insufficient. Move to an open area and retry.', 400, 'LOCATION_INACCURATE');
+      }
+    }
+
     const requestedAt = new Date();
     const qrVerified = Boolean(data.qrToken);
     // Auto-approve if QR was scanned OR if employee is verified at the workplace geofence / direct office location! No employer approval needed!
-    const isAutoApproved = qrVerified || (geofenceVerified === true) || (data.source === 'GEOFENCE') || (data.source === 'DIRECT');
+    const isAutoApproved = qrVerified || geofenceVerified === true;
+    if (wpSettings.requireWifi && wifiVerified !== true) {
+      throw new AppError('Connect to the workplace Wi-Fi before punching.', 400, 'WIFI_REQUIRED');
+    }
 
     // ── AUTO-APPROVE (QR Scan OR Geolocation match → No employer action needed) ───
     if (isAutoApproved) {
