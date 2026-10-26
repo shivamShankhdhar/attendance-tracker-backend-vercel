@@ -12,7 +12,19 @@ export class AttendanceService {
    * Get today's roster showing all active employees and their attendance state
    */
   async getTodayRoster(workplaceId: string, date?: string) {
-    const workplace = await WorkplaceModel.findById(workplaceId);
+    const cleanWp = workplaceId.trim();
+    let workplace = await WorkplaceModel.findById(cleanWp);
+    if (!workplace) {
+      workplace = await WorkplaceModel.findOne({
+        $or: [
+          { workplaceCode: cleanWp.toUpperCase() },
+          { workplaceCode: cleanWp.replace(/^wp_/i, '').toUpperCase() },
+          { code: cleanWp.toUpperCase() },
+          { code: cleanWp.replace(/^wp_/i, '').toUpperCase() },
+        ],
+        status: 'ACTIVE',
+      });
+    }
     if (!workplace) throw new AppError('Workplace not found', 404, 'WORKPLACE_NOT_FOUND');
 
     const todayDate = date || getWorkplaceLocalDate(new Date(), workplace.timezone);

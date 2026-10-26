@@ -18,7 +18,10 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       throw new AppError('Authentication token is required', 401, 'UNAUTHORIZED');
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.split(' ')[1]?.trim();
+    if (!token || token === 'undefined' || token === 'null' || token.startsWith('offline-')) {
+      throw new AppError('Authentication token is invalid or expired. Please sign in again.', 401, 'INVALID_TOKEN');
+    }
     const payload = verifyAccessToken(token);
 
     // Verify user still exists and is ACTIVE

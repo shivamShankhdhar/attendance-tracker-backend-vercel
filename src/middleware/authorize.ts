@@ -29,9 +29,25 @@ export function requireWorkplaceMember() {
         throw new AppError('Valid workplace ID is required', 400, 'INVALID_WORKPLACE_ID');
       }
 
-      const workplace = await WorkplaceModel.findById(workplaceId);
+      let workplace = await WorkplaceModel.findById(workplaceId);
+      if (!workplace) {
+        workplace = await WorkplaceModel.findOne({
+          $or: [
+            { workplaceCode: workplaceId.toUpperCase() },
+            { workplaceCode: workplaceId.replace(/^wp_/i, '').toUpperCase() },
+            { code: workplaceId.toUpperCase() },
+            { code: workplaceId.replace(/^wp_/i, '').toUpperCase() },
+          ],
+          status: 'ACTIVE',
+        });
+      }
       if (!workplace || workplace.status !== 'ACTIVE') {
         throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_NOT_FOUND');
+      }
+
+      // Canonicalize parameter to real workplace UUID
+      if (req.params.workplaceId) {
+        req.params.workplaceId = workplace._id.toString();
       }
 
       const member = await WorkplaceMemberModel.findOne({

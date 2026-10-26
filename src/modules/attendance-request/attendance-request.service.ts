@@ -59,7 +59,19 @@ export class AttendanceRequestService {
 
       todayDate = session.attendanceDate;
     } else if (data.workplaceId) {
-      workplace = await WorkplaceModel.findById(data.workplaceId);
+      const cleanWp = data.workplaceId.trim();
+      workplace = await WorkplaceModel.findById(cleanWp);
+      if (!workplace) {
+        workplace = await WorkplaceModel.findOne({
+          $or: [
+            { workplaceCode: cleanWp.toUpperCase() },
+            { workplaceCode: cleanWp.replace(/^wp_/i, '').toUpperCase() },
+            { code: cleanWp.toUpperCase() },
+            { code: cleanWp.replace(/^wp_/i, '').toUpperCase() },
+          ],
+          status: 'ACTIVE',
+        });
+      }
       if (!workplace || workplace.status !== 'ACTIVE') {
         throw new AppError('Workplace not found or inactive', 404, 'WORKPLACE_INACTIVE');
       }
