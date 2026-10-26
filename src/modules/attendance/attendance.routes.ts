@@ -17,6 +17,8 @@ attendanceRouter.get(
   attendanceController.getTodayRoster
 );
 
+attendanceRouter.get('/:workplaceId/attendance/page', requireWorkplaceMember(), attendanceController.getPage);
+
 // Employee's own attendance history
 attendanceRouter.get(
   '/:workplaceId/attendance/history',

@@ -28,11 +28,12 @@ function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2:
 }
 
 export class AttendanceRequestService {
+  constructor(private readonly db: typeof prisma = prisma) {}
 
   async submitManualRequest(userId: string, data: { workplaceId?: string; requestType?: string; attendanceDate?: string; proposedTime?: string; note?: string }) {
-    const workplace = await prisma.workplace.findUnique({ where: { id: data.workplaceId || '' } });
+    const workplace = await this.db.workplace.findUnique({ where: { id: data.workplaceId || '' } });
     if (!workplace || workplace.status !== 'ACTIVE') throw new AppError('Workplace unavailable', 404, 'WORKPLACE_NOT_FOUND');
-    const member = await prisma.workplaceMember.findFirst({ where: { workplaceId: workplace.id, userId, status: 'ACTIVE', role: 'EMPLOYEE' } });
+    const member = await this.db.workplaceMember.findFirst({ where: { workplaceId: workplace.id, userId, status: 'ACTIVE', role: 'EMPLOYEE' } });
     if (!member) throw new AppError('An active employee membership is required', 403, 'NOT_WORKPLACE_EMPLOYEE');
     const date = data.attendanceDate || '';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date || !data.note?.trim()) {
@@ -45,14 +46,14 @@ export class AttendanceRequestService {
     }
     const requestType = data.requestType!;
     const key = { workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: date, requestType };
-    const existing = await prisma.attendanceRequest.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate_requestType: key } });
+    const existing = await this.db.attendanceRequest.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate_requestType: key } });
     if (existing) throw new AppError('A request for this type and date already exists. Check its status below.', 409, 'DUPLICATE_REQUEST');
-    const session = await prisma.attendanceSession.upsert({
+    const session = await this.db.attendanceSession.upsert({
       where: { workplaceId_attendanceDate: { workplaceId: workplace.id, attendanceDate: date } }, update: {},
       create: { workplaceId: workplace.id, attendanceDate: date, createdById: workplace.ownerId,
         qrTokenHash: hashToken(generateSecureToken(32)), encryptedQrToken: encryptToken(generateSecureToken(32)), status: 'CLOSED', openedAt: new Date(), expiresAt: new Date() },
     });
-    const request = await prisma.attendanceRequest.create({ data: {
+    const request = await this.db.attendanceRequest.create({ data: {
       ...key, userId, attendanceSessionId: session.id, requestedAt: new Date(), status: 'PENDING',
       note: data.note.trim(), proposedTime: correction ? data.proposedTime : null,
     } });
@@ -60,14 +61,14 @@ export class AttendanceRequestService {
   }
 
   async getMyRequests(workplaceId: string, userId: string) {
-    const member = await prisma.workplaceMember.findFirst({ where: { workplaceId, userId, status: 'ACTIVE' } });
+    const member = await this.db.workplaceMember.findFirst({ where: { workplaceId, userId, status: 'ACTIVE' } });
     if (!member) throw new AppError('Active membership required', 403, 'NOT_WORKPLACE_EMPLOYEE');
-    const rows = await prisma.attendanceRequest.findMany({ where: { workplaceId, employeeMemberId: member.id }, orderBy: { requestedAt: 'desc' }, take: 200 });
+    const rows = await this.db.attendanceRequest.findMany({ where: { workplaceId, employeeMemberId: member.id }, orderBy: { requestedAt: 'desc' }, take: 200 });
     return rows.map(r => ({ ...r, employee: { memberId: member.id, name: member.name, code: member.employeeCode } }));
   }
 
   async approveManualRequest(workplaceId: string, requestId: string, employerUserId: string) {
-    return prisma.$transaction(async tx => {
+    return this.db.$transaction(async tx => {
       const req = await tx.attendanceRequest.findUnique({ where: { id: requestId } });
       if (!req || req.workplaceId !== workplaceId) throw new AppError('Request not found', 404, 'REQUEST_NOT_FOUND');
       if (req.status !== 'PENDING') throw new AppError('Request has already been reviewed', 409, 'REQUEST_REVIEWED');
@@ -350,7 +351,7 @@ export class AttendanceRequestService {
       const source = geofenceVerified ? 'GEOFENCE' : 'QR_SCAN';
       // Reuse a previous pending request after fresh location verification.
       const key = { workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: todayDate, requestType };
-      const savedRequest = await prisma.attendanceRequest.upsert({
+      const savedRequest = await this.db.attendanceRequest.upsert({
         where: { workplaceId_employeeMemberId_attendanceDate_requestType: key },
         create: { ...key, attendanceSessionId: session.id, userId, requestedAt,
           qrVerified, wifiVerified, geofenceVerified, distanceMeters, status: 'APPROVED', reviewedAt: requestedAt },
@@ -436,7 +437,7 @@ export class AttendanceRequestService {
           geofenceVerified: Boolean(geofenceVerified),
           distanceMeters,
         },
-        attendance: await prisma.attendance.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate: {
+        attendance: await this.db.attendance.findUnique({ where: { workplaceId_employeeMemberId_attendanceDate: {
           workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: todayDate,
         } } }),
         autoApproved: true,

@@ -57,7 +57,7 @@ export class AttendanceService {
       let checkOutTime: Date | undefined;
       let approvedAt: Date | undefined;
       let requestedAt: Date | undefined;
-      let requestType: 'CHECK_IN' | 'CHECK_OUT' | undefined;
+      let requestType: string | undefined;
 
       if (pendingReq) {
         pendingCount++;

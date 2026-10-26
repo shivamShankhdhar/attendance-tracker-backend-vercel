@@ -1,3 +1,4 @@
+import { prisma } from '../src/config/database';
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { AuthService } from '../src/modules/auth/auth.service';
@@ -11,12 +12,13 @@ import { AuditLogModel } from '../src/modules/audit/audit.model';
 import { NotificationOutboxModel } from '../src/modules/notification/notification.model';
 
 const id = '111111111111111111111111';
-const workplace: any = { _id: id, name: 'Test', status: 'ACTIVE', ownerId: id, timezone: 'Asia/Kolkata', attendanceSettings: { requireGeofence: true, latitude: 28.628, longitude: 77.3649, geofenceRadius: 150 } };
-const service = new AttendanceRequestService();
+const workplace: any = { _id: id, id, name: 'Test', status: 'ACTIVE', ownerId: id, timezone: 'Asia/Kolkata', attendanceSettings: { requireGeofence: true, latitude: 28.628, longitude: 77.3649, geofenceRadius: 150 } };
+const db: any = { attendanceRequest: { upsert: async () => ({}) }, attendance: { findUnique: async () => null } };
+const service = new AttendanceRequestService(db);
 function fixture() {
   mock.method(WorkplaceModel, 'findById', async () => workplace);
-  mock.method(AttendanceSessionModel, 'findOne', async () => ({ _id: id }));
-  mock.method(WorkplaceMemberModel, 'findOne', async () => ({ _id: id, name: 'Employee' }));
+  mock.method(AttendanceSessionModel, 'findOne', async () => ({ _id: id, id }));
+  mock.method(WorkplaceMemberModel, 'findOne', async () => ({ _id: id, id, name: 'Employee' }));
   mock.method(AttendanceModel, 'findOne', async () => null);
   mock.method(AttendanceRequestModel, 'findOne', async () => null);
 }
@@ -46,7 +48,8 @@ test('checkout without checkin is rejected', async () => {
 test('verified checkin writes attendance for the same member and workplace', async () => {
   fixture();
   let stored: any;
-  mock.method(AttendanceRequestModel, 'create', async (data: any) => ({ ...data, _id: id }));
+  mock.method(db.attendanceRequest, 'upsert', async (args: any) => ({ ...args.create, id }));
+  mock.method(db.attendance, 'findUnique', async () => ({ id, checkInTime: new Date() }));
   mock.method(AttendanceModel, 'findOneAndUpdate', async (filter: any, update: any) => { stored = { filter, update }; return { _id: id }; });
   mock.method(AuditLogModel, 'create', async () => ({}));
   mock.method(NotificationOutboxModel, 'create', async () => ({}));
@@ -92,5 +95,22 @@ test('missing office coordinates reject direct punches', async () => {
   mock.method(WorkplaceModel, 'findById', async () => ({ ...workplace, attendanceSettings: {} }));
   try {
     await assert.rejects(service.submitRequest(id, { workplaceId: id, source: 'DIRECT', latitude: 28.628, longitude: 77.3649, accuracy: 10 }), (e: any) => e.errorCode === 'OFFICE_LOCATION_NOT_CONFIGURED');
+  } finally { mock.restoreAll(); }
+});
+
+test('fresh verified office punch resolves a previous pending request', async () => {
+  fixture();
+  mock.method(AttendanceRequestModel, 'findOne', async () => ({ _id: id, status: 'PENDING' }));
+  let update: any;
+  mock.method(db.attendanceRequest, 'upsert', async (args: any) => { update = args.update; return { ...args.create, id }; });
+  mock.method(db.attendance, 'findUnique', async () => ({ id, checkInTime: new Date() }));
+  mock.method(AttendanceModel, 'findOneAndUpdate', async () => ({ _id: id }));
+  mock.method(AuditLogModel, 'create', async () => ({}));
+  mock.method(NotificationOutboxModel, 'create', async () => ({}));
+  try {
+    const result = await service.submitRequest(id, { workplaceId: id, source: 'GEOFENCE', latitude: 28.628, longitude: 77.3649, accuracy: 10 });
+    assert.equal(update.status, 'APPROVED');
+    assert.equal(result.request?.status, 'APPROVED');
+    assert.ok(result.attendance);
   } finally { mock.restoreAll(); }
 });
