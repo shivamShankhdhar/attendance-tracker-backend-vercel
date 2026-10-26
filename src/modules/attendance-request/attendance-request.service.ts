@@ -64,7 +64,7 @@ export class AttendanceRequestService {
     const member = await this.db.workplaceMember.findFirst({ where: { workplaceId, userId, status: 'ACTIVE' } });
     if (!member) throw new AppError('Active membership required', 403, 'NOT_WORKPLACE_EMPLOYEE');
     const rows = await this.db.attendanceRequest.findMany({ where: { workplaceId, employeeMemberId: member.id }, orderBy: { requestedAt: 'desc' }, take: 200 });
-    return rows.map(r => ({ ...r, employee: { memberId: member.id, name: member.name, code: member.employeeCode } }));
+    return rows.filter(r => !r.qrVerified && !r.geofenceVerified).map(r => ({ ...r, employee: { memberId: member.id, name: member.name, code: member.employeeCode } }));
   }
 
   async approveManualRequest(workplaceId: string, requestId: string, employerUserId: string) {
@@ -531,7 +531,7 @@ export class AttendanceRequestService {
         },
       });
 
-    return requests.map((req: any) => ({
+    return requests.filter(req => !req.verification.qrVerified && !req.verification.geofenceVerified).map((req: any) => ({
       id: req._id.toString(),
       attendanceDate: req.attendanceDate,
       requestedAt: req.requestedAt,
@@ -764,11 +764,12 @@ export class AttendanceRequestService {
     }
 
     const now = new Date();
-    request.status = 'REJECTED';
-    request.reviewedBy = new Types.ObjectId(employerUserId);
-    request.reviewedAt = now;
-    request.rejectionReason = reason?.trim();
-    await request.save();
+    if (request.status === 'REJECTED') return { message: 'Request already rejected' };
+    const rejected = await this.db.attendanceRequest.updateMany({
+      where: { id: requestId, workplaceId, status: 'PENDING' },
+      data: { status: 'REJECTED', reviewedById: employerUserId, reviewedAt: now, rejectionReason: reason?.trim() },
+    });
+    if (rejected.count !== 1) throw new AppError('Request has already been reviewed. Refresh to see its status.', 409, 'REQUEST_REVIEWED');
 
     // Log audit event
     await AuditLogModel.create({

@@ -5,6 +5,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { getParam } from '../../utils/params';
 
 export class AttendanceController {
+  constructor(private readonly db: typeof prisma = prisma) {}
   async getPage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const workplaceId = getParam(req, 'workplaceId');
@@ -22,7 +23,7 @@ export class AttendanceController {
         const date = cursor.slice(0, split), id = cursor.slice(split + 1);
         where.OR = [{ attendanceDate: { lt: date } }, { attendanceDate: date, id: { lt: id } }];
       }
-      const rows = await prisma.attendance.findMany({ where, orderBy: [{ attendanceDate: 'desc' }, { id: 'desc' }], take: 21,
+      const rows = await this.db.attendance.findMany({ where, orderBy: [{ attendanceDate: 'desc' }, { id: 'desc' }], take: 21,
         include: { employeeMember: { select: { id: true, name: true, employeeCode: true } } } });
       const page = rows.slice(0, 20), last = page[page.length - 1];
       res.json({ success: true, data: { records: page.map(r => ({ ...r, employee: { memberId: r.employeeMember.id, name: r.employeeMember.name, code: r.employeeMember.employeeCode } })),

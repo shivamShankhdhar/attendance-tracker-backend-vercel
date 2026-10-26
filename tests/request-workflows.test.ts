@@ -1,3 +1,4 @@
+import { AttendanceController } from '../src/modules/attendance/attendance.controller';
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { localRequestInstant } from '../src/modules/attendance-request/request-time';
@@ -50,4 +51,23 @@ test('employee request history is scoped to the active membership', async () => 
   mock.method(db.attendanceRequest, 'findMany', async (args: any) => { where = args.where; return []; });
   try { await service.getMyRequests('workplace', 'user'); assert.deepEqual(where, { workplaceId: 'workplace', employeeMemberId: 'own-member' }); }
   finally { mock.restoreAll(); }
+});
+
+test('paginated history forces employee scope and returns a stable newest-first cursor', async () => {
+  let query: any, response: any;
+  const records = Array.from({ length: 21 }, (_, i) => ({ id: String(30 - i), attendanceDate: '2026-10-26', employeeMember: { id: 'self', name: 'Alice', employeeCode: 'E1' } }));
+  const controller = new AttendanceController({ attendance: { findMany: async (args: any) => { query = args; return records; } } } as any);
+  const req: any = { params: { workplaceId: 'w' }, query: { startDate: '2026-10-01', endDate: '2026-10-26', memberId: 'other' },
+    workplaceMember: { role: 'EMPLOYEE', _id: 'self' }, workplace: { attendanceSettings: {} } };
+  await controller.getPage(req, { json: (value: any) => { response = value; } } as any, (e: any) => { throw e; });
+  assert.equal(query.where.employeeMemberId, 'self'); assert.equal(query.take, 21);
+  assert.deepEqual(query.orderBy, [{ attendanceDate: 'desc' }, { id: 'desc' }]);
+  assert.equal(response.data.records.length, 20); assert.equal(response.data.nextCursor, '2026-10-26|11');
+});
+test('history policy is enforced before reading attendance pages', async () => {
+  let error: any;
+  const controller = new AttendanceController({} as any);
+  await controller.getPage({ params: { workplaceId: 'w' }, query: {}, workplaceMember: { role: 'EMPLOYEE', _id: 'self' }, workplace: { attendanceSettings: { allowEmployeeViewHistory: false } } } as any,
+    {} as any, (e: any) => { error = e; });
+  assert.equal(error.errorCode, 'HISTORY_DISABLED');
 });
