@@ -5,7 +5,10 @@ import { AppError } from '../../middleware/errorHandler';
 import { getParam } from '../../utils/params';
 
 export class AttendanceController {
-  constructor(private readonly db: typeof prisma = prisma) {}
+  constructor(private readonly db: typeof prisma = prisma) {
+    // Express invokes route callbacks without their controller receiver.
+    this.getPage = this.getPage.bind(this);
+  }
   async getPage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const workplaceId = getParam(req, 'workplaceId');

@@ -59,7 +59,9 @@ test('paginated history forces employee scope and returns a stable newest-first 
   const controller = new AttendanceController({ attendance: { findMany: async (args: any) => { query = args; return records; } } } as any);
   const req: any = { params: { workplaceId: 'w' }, query: { startDate: '2026-10-01', endDate: '2026-10-26', memberId: 'other' },
     workplaceMember: { role: 'EMPLOYEE', _id: 'self' }, workplace: { attendanceSettings: {} } };
-  await controller.getPage(req, { json: (value: any) => { response = value; } } as any, (e: any) => { throw e; });
+  // Match Express's detached route-callback invocation, not a method call.
+  const routeHandler = controller.getPage;
+  await routeHandler(req, { json: (value: any) => { response = value; } } as any, (e: any) => { throw e; });
   assert.equal(query.where.employeeMemberId, 'self'); assert.equal(query.take, 21);
   assert.deepEqual(query.orderBy, [{ attendanceDate: 'desc' }, { id: 'desc' }]);
   assert.equal(response.data.records.length, 20); assert.equal(response.data.nextCursor, '2026-10-26|11');
