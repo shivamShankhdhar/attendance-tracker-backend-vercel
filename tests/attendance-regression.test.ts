@@ -63,6 +63,26 @@ test('verified checkin writes attendance for the same member and workplace', asy
   } finally { mock.restoreAll(); }
 });
 
+test('verified checkin recovers and succeeds even when attendanceRequest upsert fails', async () => {
+  fixture();
+  let stored: any;
+  (db.attendanceRequest as any).findFirst = async () => null;
+  (db.attendanceRequest as any).create = async (args: any) => ({ ...args.data, id });
+  mock.method(db.attendanceRequest, 'upsert', async () => {
+    throw new Error('there is no unique or exclusion constraint matching the ON CONFLICT specification');
+  });
+  mock.method(db.attendance, 'findUnique', async () => ({ id, checkInTime: new Date() }));
+  mock.method(AttendanceModel, 'findOneAndUpdate', async (filter: any, update: any) => { stored = { filter, update }; return { _id: id }; });
+  mock.method(AuditLogModel, 'create', async () => ({}));
+  mock.method(NotificationOutboxModel, 'create', async () => ({}));
+  try {
+    const result = await service.submitRequest(id, { workplaceId: id, source: 'GEOFENCE', latitude: 28.628, longitude: 77.3649, accuracy: 10 });
+    assert.equal(result.request?.status, 'APPROVED');
+    assert.equal(stored.filter.workplaceId, id);
+    assert.equal(stored.filter.employeeMemberId, id);
+  } finally { mock.restoreAll(); }
+});
+
 for (const requestType of ['CHECK_IN', 'CHECK_OUT'] as const) {
   test(`${requestType} outside the saved office is rejected without writing attendance`, async () => {
     fixture();

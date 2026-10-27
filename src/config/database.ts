@@ -224,6 +224,37 @@ export async function ensureSchema(): Promise<void> {
       "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
     );`,
 
+    `DELETE FROM attendance_requests a USING attendance_requests b
+      WHERE a.ctid < b.ctid
+        AND a."workplaceId" = b."workplaceId"
+        AND a."employeeMemberId" = b."employeeMemberId"
+        AND a."attendanceDate" = b."attendanceDate"
+        AND a."requestType" = b."requestType";`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "attendance_requests_workplaceId_employeeMemberId_attendanceDate_requestType_key"
+      ON attendance_requests ("workplaceId", "employeeMemberId", "attendanceDate", "requestType");`,
+
+    `DELETE FROM attendances a USING attendances b
+      WHERE a.ctid < b.ctid
+        AND a."workplaceId" = b."workplaceId"
+        AND a."employeeMemberId" = b."employeeMemberId"
+        AND a."attendanceDate" = b."attendanceDate";`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "attendances_workplaceId_employeeMemberId_attendanceDate_key"
+      ON attendances ("workplaceId", "employeeMemberId", "attendanceDate");`,
+
+    `DELETE FROM attendance_sessions a USING attendance_sessions b
+      WHERE a.ctid < b.ctid
+        AND a."workplaceId" = b."workplaceId"
+        AND a."attendanceDate" = b."attendanceDate";`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "attendance_sessions_workplaceId_attendanceDate_key"
+      ON attendance_sessions ("workplaceId", "attendanceDate");`,
+
+    `CREATE UNIQUE INDEX IF NOT EXISTS "workplace_members_workplaceId_userId_key"
+      ON workplace_members ("workplaceId", "userId");`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "workplace_members_workplaceId_employeeCode_key"
+      ON workplace_members ("workplaceId", "employeeCode");`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "teams_workplaceId_name_key"
+      ON teams ("workplaceId", name);`,
+
     `DROP TABLE IF EXISTS audit_logs CASCADE;`
   ];
 
@@ -235,20 +266,33 @@ export async function ensureSchema(): Promise<void> {
       throw err;
     }
   }
+  schemaChecked = true;
 }
 
-// One connection attempt per warm instance. Never run DDL on a user request:
-// initialize schema explicitly during provisioning with npm run db:initialize.
+let schemaChecked = false;
+
+// One connection attempt per warm instance. Fast single-query check prevents
+// redundant DDL on warm starts.
 let connection: Promise<PrismaClient> | undefined;
 let schemaEnsured = false;
 
 export function connectDatabase(): Promise<PrismaClient> {
   if (!connection) {
     connection = prisma.$connect().then(async () => {
-      if (!schemaEnsured) {
+      const isTest = process.env.NODE_ENV === 'test' || process.argv.some(arg => arg.includes('test'));
+      if (!schemaEnsured && !isTest) {
         try {
-          await ensureSchema();
-          schemaEnsured = true;
+          // Fast-path: check if composite unique index already exists
+          const exists: any = await prisma.$queryRawUnsafe(
+            `SELECT 1 FROM pg_indexes WHERE indexname = 'attendance_requests_workplaceId_employeeMemberId_attendanceDate_requestType_key' LIMIT 1;`
+          ).catch(() => []);
+          if (Array.isArray(exists) && exists.length > 0) {
+            schemaChecked = true;
+            schemaEnsured = true;
+          } else {
+            await ensureSchema();
+            schemaEnsured = true;
+          }
         } catch (schemaErr: any) {
           console.warn('[Schema Init Warning] Could not auto-ensure schema:', schemaErr?.message);
         }

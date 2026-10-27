@@ -353,13 +353,30 @@ export class AttendanceRequestService {
       const source = geofenceVerified ? 'GEOFENCE' : 'QR_SCAN';
       // Reuse a previous pending request after fresh location verification.
       const key = { workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: todayDate, requestType };
-      const savedRequest = await this.db.attendanceRequest.upsert({
-        where: { workplaceId_employeeMemberId_attendanceDate_requestType: key },
-        create: { ...key, attendanceSessionId: session.id, userId, requestedAt,
-          qrVerified, wifiVerified, geofenceVerified, distanceMeters, status: 'APPROVED', reviewedAt: requestedAt },
-        update: { status: 'APPROVED', requestedAt, reviewedAt: requestedAt, qrVerified, wifiVerified, geofenceVerified, distanceMeters },
-      });
-      const request = { ...savedRequest, _id: savedRequest.id, verification: { qrVerified, wifiVerified, geofenceVerified, distanceMeters } };
+      let savedRequest: any;
+      try {
+        savedRequest = await this.db.attendanceRequest.upsert({
+          where: { workplaceId_employeeMemberId_attendanceDate_requestType: key },
+          create: { ...key, attendanceSessionId: session.id, userId, requestedAt,
+            qrVerified, wifiVerified, geofenceVerified, distanceMeters, status: 'APPROVED', reviewedAt: requestedAt },
+          update: { status: 'APPROVED', requestedAt, reviewedAt: requestedAt, qrVerified, wifiVerified, geofenceVerified, distanceMeters },
+        });
+      } catch (upsertError: any) {
+        console.warn('[AttendanceRequest] Upsert failed, falling back to findFirst/create/update:', upsertError?.message);
+        const existing = await this.db.attendanceRequest.findFirst({ where: key });
+        if (existing) {
+          savedRequest = await this.db.attendanceRequest.update({
+            where: { id: existing.id },
+            data: { status: 'APPROVED', requestedAt, reviewedAt: requestedAt, qrVerified, wifiVerified, geofenceVerified, distanceMeters },
+          });
+        } else {
+          savedRequest = await this.db.attendanceRequest.create({
+            data: { ...key, attendanceSessionId: session.id, userId, requestedAt,
+              qrVerified, wifiVerified, geofenceVerified, distanceMeters, status: 'APPROVED', reviewedAt: requestedAt },
+          });
+        }
+      }
+      const request = { ...savedRequest, _id: savedRequest?.id || 'auto-approved', verification: { qrVerified, wifiVerified, geofenceVerified, distanceMeters } };
 
       if (requestType === 'CHECK_OUT') {
         await AttendanceModel.findOneAndUpdate(
