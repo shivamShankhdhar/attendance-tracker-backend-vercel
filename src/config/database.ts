@@ -36,9 +36,6 @@ export async function ensureSchema(): Promise<void> {
       "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
     );`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';`,
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT '';`,
-    `ALTER TABLE users ALTER COLUMN display_name DROP NOT NULL;`,
-    `ALTER TABLE users ALTER COLUMN display_name SET DEFAULT '';`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS "avatarUrl" TEXT;`,
@@ -195,6 +192,8 @@ export async function ensureSchema(): Promise<void> {
       "attendanceDate" TEXT NOT NULL,
       "requestedAt" TIMESTAMP NOT NULL,
       "requestType" TEXT NOT NULL DEFAULT 'CHECK_IN',
+      note TEXT,
+      "proposedTime" TEXT,
       "qrVerified" BOOLEAN NOT NULL DEFAULT false,
       "wifiVerified" BOOLEAN,
       "geofenceVerified" BOOLEAN,
@@ -207,9 +206,6 @@ export async function ensureSchema(): Promise<void> {
       "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(),
       "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
     );`,
-
-    `ALTER TABLE attendance_requests ADD COLUMN IF NOT EXISTS note TEXT;`,
-    `ALTER TABLE attendance_requests ADD COLUMN IF NOT EXISTS "proposedTime" TEXT;`,
 
     `CREATE TABLE IF NOT EXISTS notification_outboxes (
       id TEXT PRIMARY KEY,
