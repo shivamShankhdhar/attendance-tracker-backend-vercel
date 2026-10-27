@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { isValidTimezone } from '../../utils/date';
 
 export const createWorkplaceSchema = z.object({
-  name: z.string().min(2, 'Workplace name must be at least 2 characters').max(60),
+  name: z.string().trim().min(2, 'Workplace name must be at least 2 characters').max(60),
   timezone: z
     .string()
     .optional()

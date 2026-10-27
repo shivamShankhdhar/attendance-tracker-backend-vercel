@@ -11,9 +11,7 @@ export const prisma: PrismaClient =
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   });
 
-if (process.env.NODE_ENV !== 'production') {
-  global.prismaGlobal = prisma;
-}
+global.prismaGlobal = prisma;
 
 export async function ensureSchema(): Promise<void> {
   const statements = [
@@ -245,30 +243,29 @@ export async function ensureSchema(): Promise<void> {
     try {
       await prisma.$executeRawUnsafe(sql);
     } catch (err: any) {
-      console.warn('[Database Schema Warning] Failed executing statement:', err.message);
+      console.error('[Database Schema Error] Failed executing statement:', err.message);
+      throw err;
     }
   }
 }
 
-let schemaEnsured = false;
+// One connection attempt per warm instance. Never run DDL on a user request:
+// initialize schema explicitly during provisioning with npm run db:initialize.
+let connection: Promise<PrismaClient> | undefined;
 
-export async function connectDatabase(): Promise<PrismaClient> {
-  try {
-    await prisma.$connect();
-    console.log('[Database] Connected to PostgreSQL (Neon)');
-    if (!schemaEnsured) {
-      await ensureSchema();
-      schemaEnsured = true;
-    }
-    return prisma;
-  } catch (error) {
-    console.error('[Database] Failed to connect to PostgreSQL:', error);
-    throw error;
+export function connectDatabase(): Promise<PrismaClient> {
+  if (!connection) {
+    connection = prisma.$connect().then(() => prisma).catch(error => {
+      connection = undefined; // A transient outage must not poison this instance.
+      throw error;
+    });
   }
+  return connection;
 }
 
 export async function disconnectDatabase(): Promise<void> {
+  const pending = connection;
+  connection = undefined;
+  await pending?.catch(() => undefined);
   await prisma.$disconnect();
-  console.log('[Database] Disconnected from PostgreSQL');
 }
-
