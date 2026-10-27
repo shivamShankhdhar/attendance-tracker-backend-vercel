@@ -240,10 +240,21 @@ export async function ensureSchema(): Promise<void> {
 // One connection attempt per warm instance. Never run DDL on a user request:
 // initialize schema explicitly during provisioning with npm run db:initialize.
 let connection: Promise<PrismaClient> | undefined;
+let schemaEnsured = false;
 
 export function connectDatabase(): Promise<PrismaClient> {
   if (!connection) {
-    connection = prisma.$connect().then(() => prisma).catch(error => {
+    connection = prisma.$connect().then(async () => {
+      if (!schemaEnsured) {
+        try {
+          await ensureSchema();
+          schemaEnsured = true;
+        } catch (schemaErr: any) {
+          console.warn('[Schema Init Warning] Could not auto-ensure schema:', schemaErr?.message);
+        }
+      }
+      return prisma;
+    }).catch(error => {
       connection = undefined; // A transient outage must not poison this instance.
       throw error;
     });
