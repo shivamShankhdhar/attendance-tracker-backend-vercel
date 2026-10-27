@@ -335,8 +335,9 @@ export class AttendanceRequestService {
     }
 
     if (data.source === 'GEOFENCE' || data.source === 'DIRECT') {
-      if (data.accuracy == null || !Number.isFinite(data.accuracy) || data.accuracy <= 0 || data.accuracy > Math.min(wpRadius, 50)) {
-        throw new AppError('GPS accuracy is insufficient. Move to an open area and retry.', 400, 'LOCATION_INACCURATE');
+      const maxAllowedAccuracy = Math.max(wpRadius * 1.5, 150);
+      if (data.accuracy == null || !Number.isFinite(data.accuracy) || data.accuracy <= 0 || data.accuracy > maxAllowedAccuracy) {
+        throw new AppError('GPS accuracy is insufficient. Ensure Wi-Fi is on or move closer to the office and retry.', 400, 'LOCATION_INACCURATE');
       }
     }
 

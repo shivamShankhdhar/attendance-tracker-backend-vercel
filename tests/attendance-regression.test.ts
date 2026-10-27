@@ -102,6 +102,20 @@ for (const requestType of ['CHECK_IN', 'CHECK_OUT'] as const) {
       await assert.rejects(service.submitRequest(id, { workplaceId: id, source: 'GEOFENCE', requestType, latitude: 28.628, longitude: 77.3649, accuracy: 500 }), (e: any) => e.errorCode === 'LOCATION_INACCURATE');
     } finally { mock.restoreAll(); }
   });
+  test(`${requestType} accepts realistic indoor GPS accuracy (e.g. 75m) within office geofence`, async () => {
+    fixture();
+    if (requestType === 'CHECK_OUT') mock.method(AttendanceModel, 'findOne', async () => ({ _id: id, checkInTime: new Date() }));
+    mock.method(db.attendanceRequest, 'upsert', async (args: any) => ({ ...args.create, id }));
+    mock.method(db.attendance, 'findUnique', async () => ({ id, checkInTime: new Date() }));
+    mock.method(AttendanceModel, 'findOneAndUpdate', async () => ({ _id: id }));
+    mock.method(AuditLogModel, 'create', async () => ({}));
+    mock.method(NotificationOutboxModel, 'create', async () => ({}));
+    try {
+      const res = await service.submitRequest(id, { workplaceId: id, source: 'GEOFENCE', requestType, latitude: 28.628, longitude: 77.3649, accuracy: 75 });
+      assert.equal(res.request?.status, 'APPROVED');
+      assert.equal(res.geofenceVerified, true);
+    } finally { mock.restoreAll(); }
+  });
 }
 test('DIRECT still enforces office radius when requireGeofence is disabled', async () => {
   fixture();
