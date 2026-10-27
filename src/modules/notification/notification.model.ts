@@ -162,6 +162,16 @@ export const NotificationOutboxModel = {
     return { modifiedCount: 1 };
   },
 
+  async deleteOne(filter: any = {}) {
+    const where: any = {};
+    if (filter._id) where.id = toId(filter._id);
+    if (filter.id) where.id = toId(filter.id);
+    const existing = await prisma.notificationOutbox.findFirst({ where });
+    if (!existing) return { deletedCount: 0 };
+    await prisma.notificationOutbox.delete({ where: { id: existing.id } });
+    return { deletedCount: 1 };
+  },
+
   async deleteMany(filter: any = {}) {
     const where: any = {};
     if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);

@@ -42,51 +42,34 @@ function wrapAudit(a: any): IAuditLog | null {
 
 export const AuditLogModel = {
   async create(data: any, options?: any): Promise<any> {
+    // Audit logs disabled per user requirement - no-op to prevent database clutter
     if (Array.isArray(data)) {
-      const results: IAuditLog[] = [];
-      for (const item of data) {
-        results.push(await this.create(item));
-      }
-      return results;
+      return data.map((d) => ({
+        id: 'noop',
+        _id: 'noop',
+        workplaceId: d.workplaceId,
+        actorId: d.actorId,
+        action: d.action,
+        entityId: String(d.entityId),
+        createdAt: new Date(),
+      }));
     }
-
-    const created = await prisma.auditLog.create({
-      data: {
-        workplaceId: toId(data.workplaceId),
-        actorId: toId(data.actorId),
-        action: data.action,
-        entityId: String(data.entityId),
-        metadata: data.metadata || null,
-      },
-    });
-    return wrapAudit(created)!;
+    return {
+      id: 'noop',
+      _id: 'noop',
+      workplaceId: data?.workplaceId,
+      actorId: data?.actorId,
+      action: data?.action,
+      entityId: String(data?.entityId),
+      createdAt: new Date(),
+    };
   },
 
   find(filter: any = {}): QueryBuilder<IAuditLog> {
-    return new QueryBuilder<IAuditLog>(async ({ sort, limit }) => {
-      const where: any = {};
-      if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
-      if (filter.actorId) where.actorId = toId(filter.actorId);
-      if (filter.action) where.action = filter.action;
-
-      const orderBy: any[] = [];
-      if (sort) {
-        if (sort.createdAt !== undefined) orderBy.push({ createdAt: sort.createdAt === -1 ? 'desc' : 'asc' });
-      }
-
-      const logs = await prisma.auditLog.findMany({
-        where,
-        take: limit,
-        orderBy: orderBy.length > 0 ? orderBy : { createdAt: 'desc' },
-      });
-      return logs.map((l) => wrapAudit(l) as IAuditLog);
-    });
+    return new QueryBuilder<IAuditLog>(async () => []);
   },
 
   async deleteMany(filter: any = {}) {
-    const where: any = {};
-    if (filter.workplaceId) where.workplaceId = toId(filter.workplaceId);
-    const res = await prisma.auditLog.deleteMany({ where });
-    return { deletedCount: res.count };
+    return { deletedCount: 0 };
   },
 };

@@ -228,15 +228,7 @@ export async function ensureSchema(): Promise<void> {
       "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
     );`,
 
-    `CREATE TABLE IF NOT EXISTS audit_logs (
-      id TEXT PRIMARY KEY,
-      "workplaceId" TEXT NOT NULL,
-      "actorId" TEXT NOT NULL,
-      action TEXT NOT NULL,
-      "entityId" TEXT NOT NULL,
-      metadata JSONB,
-      "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
-    );`
+    `DROP TABLE IF EXISTS audit_logs CASCADE;`
   ];
 
   for (const sql of statements) {

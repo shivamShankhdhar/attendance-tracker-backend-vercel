@@ -15,7 +15,11 @@ export class NotificationService {
       try {
         const recipient = await UserModel.findById(job.recipientId);
         if (!recipient?.expoPushToken) {
-          // Keep the event for a later registration, instead of falsely marking it sent.
+          // If waiting for more than 24 hours without a token, delete to prevent database clutter
+          if (Date.now() - new Date(job.createdAt).getTime() > 24 * 3600_000) {
+            await NotificationOutboxModel.deleteOne({ _id: job._id });
+            continue;
+          }
           job.nextAttemptAt = new Date(Date.now() + 30 * 60_000);
           job.lastError = 'Waiting for device notification registration';
           await job.save();
@@ -34,14 +38,20 @@ export class NotificationService {
           }
           throw new Error(result.data?.message || `Push delivery failed (${response.status})`);
         }
-        job.status = 'SENT'; job.attempts++; job.lastError = undefined;
-        await job.save(); sent++;
+        // Delete completed notification from outbox immediately after successful delivery
+        await NotificationOutboxModel.deleteOne({ _id: job._id });
+        sent++;
       } catch (error) {
         job.attempts++;
         job.lastError = error instanceof Error ? error.message : 'Push delivery failed';
         job.nextAttemptAt = new Date(Date.now() + job.attempts ** 2 * 120_000);
-        if (job.attempts >= 5) job.status = 'FAILED';
-        await job.save(); failed++;
+        if (job.attempts >= 5) {
+          // Purge failed jobs after max retry attempts
+          await NotificationOutboxModel.deleteOne({ _id: job._id });
+        } else {
+          await job.save();
+        }
+        failed++;
       }
     }
     return { processed, sent, failed };

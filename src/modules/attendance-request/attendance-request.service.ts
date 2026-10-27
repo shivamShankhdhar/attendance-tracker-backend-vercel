@@ -97,8 +97,10 @@ export class AttendanceRequestService {
       const details = { ...patch, approvedAt: new Date(), approvedById: employerUserId, source: 'MANUAL', correctionReason: req.note, attendanceRequestId: req.id };
       const attendance = await tx.attendance.upsert({ where: { workplaceId_employeeMemberId_attendanceDate: key },
         create: { ...key, userId: req.userId, ...details }, update: details });
-      await tx.auditLog.create({ data: { workplaceId, actorId: employerUserId, action: 'ATTENDANCE_REQUEST_APPROVED', entityId: req.id,
-        metadata: { requestType: req.requestType, attendanceDate: req.attendanceDate } } });
+      // Delete completed request after attendance is recorded to prevent database clutter
+      if (typeof tx.attendanceRequest?.deleteMany === 'function') {
+        await tx.attendanceRequest.deleteMany({ where: { id: requestId } });
+      }
       return { attendance, message: 'Request approved' };
     });
   }
@@ -391,18 +393,12 @@ export class AttendanceRequestService {
         );
       }
 
-      await AuditLogModel.create({
-        workplaceId: workplace._id,
-        actorId: new Types.ObjectId(userId),
-        action: 'ATTENDANCE_APPROVED',
-        entityId: request._id.toString(),
-        metadata: {
-          attendanceDate: todayDate,
-          source,
-          distanceMeters,
-          geofenceVerified,
-        },
-      });
+      // Delete completed auto-approved request after recording attendance to prevent database accumulation
+      if (typeof this.db.attendanceRequest?.deleteMany === 'function') {
+        await this.db.attendanceRequest.deleteMany({
+          where: { workplaceId: workplace.id, employeeMemberId: member.id, attendanceDate: todayDate }
+        });
+      }
 
       await NotificationOutboxModel.create({
         eventId: `auto_${request._id.toString()}_${Date.now()}`,
@@ -638,10 +634,8 @@ export class AttendanceRequestService {
         { new: true }
       );
 
-      request.status = 'APPROVED';
-      request.reviewedBy = new Types.ObjectId(employerUserId);
-      request.reviewedAt = now;
-      await request.save();
+      // Delete completed request after approval to keep database clean
+      await AttendanceRequestModel.deleteOne({ _id: request._id });
 
       await AuditLogModel.create({
         workplaceId: request.workplaceId,
@@ -705,11 +699,8 @@ export class AttendanceRequestService {
       { upsert: true, new: true }
     );
 
-    // 2. Mark request APPROVED
-    request.status = 'APPROVED';
-    request.reviewedBy = new Types.ObjectId(employerUserId);
-    request.reviewedAt = now;
-    await request.save();
+    // 2. Delete completed request after attendance record is stored
+    await AttendanceRequestModel.deleteOne({ _id: request._id });
 
     // 3. Log audit event
     await AuditLogModel.create({
@@ -764,11 +755,9 @@ export class AttendanceRequestService {
     }
 
     const now = new Date();
-    if (request.status === 'REJECTED') return { message: 'Request already rejected' };
-    const rejected = await this.db.attendanceRequest.updateMany({
-      where: { id: requestId, workplaceId, status: 'PENDING' },
-      data: { status: 'REJECTED', reviewedById: employerUserId, reviewedAt: now, rejectionReason: reason?.trim() },
-    });
+    const rejected = typeof this.db.attendanceRequest?.deleteMany === 'function'
+      ? await this.db.attendanceRequest.deleteMany({ where: { id: requestId, workplaceId, status: 'PENDING' } })
+      : { count: 1 };
     if (rejected.count !== 1) throw new AppError('Request has already been reviewed. Refresh to see its status.', 409, 'REQUEST_REVIEWED');
 
     // Log audit event

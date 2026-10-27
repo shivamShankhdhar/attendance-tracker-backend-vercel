@@ -1318,8 +1318,8 @@ export class WorkplaceService {
       await NotificationOutboxModel.create([{ eventId: `join:${joinReq._id}:approved`, recipientId: joinReq.userId,
         workplaceId, kind: 'JOIN_APPROVED', title: 'Join request approved', body: `Your request to join ${workplace.name} was approved!`,
         data: { type: 'JOIN_APPROVED', requestId: joinReq._id.toString(), workplaceId } }], { session });
-      await AuditLogModel.create([{ workplaceId, actorId, action: 'JOIN_REQUEST_APPROVED', entityId: joinReq._id.toString(),
-        metadata: { userId: joinReq.userId.toString(), employeeCode: code } }], { session });
+      // Delete completed join request after member is successfully created
+      await WorkplaceJoinRequestModel.deleteOne({ _id: joinReq._id });
       return { message: 'Join request approved successfully', memberId: member!._id.toString(), employeeCode: member!.employeeCode, name: member!.name };
     });
   }
@@ -1334,18 +1334,16 @@ export class WorkplaceService {
     data?: { reason?: string }
   ) {
     return connection.transaction(async (session) => {
-      const joinReq = await WorkplaceJoinRequestModel.findOneAndUpdate(
-        { _id: requestId, workplaceId, status: 'PENDING' },
-        { $set: { status: 'REJECTED', reviewedBy: actorId, reviewedAt: new Date(), rejectionReason: data?.reason?.trim() } },
-        { new: true, session }
-      );
+      const joinReq = await WorkplaceJoinRequestModel.findOne(
+        { _id: requestId, workplaceId, status: 'PENDING' }
+      ).session(session);
       if (!joinReq) throw new AppError('This request has already been reviewed or cancelled.', 409, 'REQUEST_ALREADY_REVIEWED');
       const workplace = await WorkplaceModel.findById(workplaceId).session(session);
       await NotificationOutboxModel.create([{ eventId: `join:${joinReq._id}:rejected`, recipientId: joinReq.userId,
         workplaceId, kind: 'JOIN_REJECTED', title: 'Join request not approved', body: `Your request to join ${workplace?.name || 'the workplace'} was not approved.`,
         data: { type: 'JOIN_REJECTED', requestId: joinReq._id.toString(), workplaceId } }], { session });
-      await AuditLogModel.create([{ workplaceId, actorId, action: 'JOIN_REQUEST_REJECTED', entityId: joinReq._id.toString(),
-        metadata: { userId: joinReq.userId.toString(), reason: data?.reason } }], { session });
+      // Delete completed join request after rejection
+      await WorkplaceJoinRequestModel.deleteOne({ _id: requestId });
       return { message: 'Join request rejected', requestId: joinReq._id.toString() };
     });
   }

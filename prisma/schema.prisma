@@ -42,7 +42,6 @@ model User {
   attendanceRequests        AttendanceRequest[]      @relation("UserAttendanceRequests")
   reviewedAttendanceRequests AttendanceRequest[]     @relation("ReviewedAttendanceRequests")
   notifications             NotificationOutbox[]
-  auditLogs                 AuditLog[]
 
   @@map("users")
 }
@@ -104,7 +103,6 @@ model Workplace {
   attendanceRecords        Attendance[]
   attendanceRequests       AttendanceRequest[]
   notifications            NotificationOutbox[]
-  auditLogs                AuditLog[]
 
   @@index([ownerId])
   @@map("workplaces")
@@ -305,20 +303,4 @@ model NotificationOutbox {
 
   @@index([status, nextAttemptAt])
   @@map("notification_outboxes")
-}
-
-model AuditLog {
-  id          String    @id @default(uuid())
-  workplaceId String
-  actorId     String
-  action      String
-  entityId    String
-  metadata    Json?
-  createdAt   DateTime  @default(now())
-
-  workplace   Workplace @relation(fields: [workplaceId], references: [id], onDelete: Cascade)
-  actor       User      @relation(fields: [actorId], references: [id], onDelete: Cascade)
-
-  @@index([workplaceId, createdAt])
-  @@map("audit_logs")
 }

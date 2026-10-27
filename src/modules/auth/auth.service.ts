@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { prisma } from '../../config/database';
 import { Types } from '../../config/prisma-compat';
 import { OAuth2Client } from 'google-auth-library';
 import { UserModel, IUser } from './user.model';
@@ -607,6 +608,9 @@ export class AuthService {
     // Generate random 6-digit numeric OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpHash = await hashPin(otp);
+
+    // Purge all expired OTPs across the database to prevent accumulation
+    await prisma.mpinOtp.deleteMany({ where: { expiresAt: { lt: new Date() } } }).catch(() => null);
 
     // Remove any previous pending OTPs for this user and purpose
     await MpinOtpModel.deleteMany({ userId: user._id, purpose });
