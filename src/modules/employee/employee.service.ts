@@ -28,6 +28,7 @@ export class EmployeeService {
       id: emp._id.toString(),
       name: emp.name,
       employeeCode: emp.employeeCode,
+      role: emp.role,
       invitedEmail: emp.invitedEmail || emp.userId?.email || undefined,
       teamId: emp.teamId?._id?.toString() || (emp.teamId ? emp.teamId.toString() : undefined),
       teamName: emp.teamId?.name || undefined,

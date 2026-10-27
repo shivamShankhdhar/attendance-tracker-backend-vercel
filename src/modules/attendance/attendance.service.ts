@@ -34,7 +34,7 @@ export class AttendanceService {
     const [employees, attendances, requests] = await Promise.all([
       WorkplaceMemberModel.find({
         workplaceId: workplace._id, role: 'EMPLOYEE', status: { $in: ['ACTIVE', 'INVITED'] },
-      }).populate('userId', 'avatarUrl').select('name employeeCode userId').sort({ name: 1 }).lean(),
+      }).populate('userId', 'avatarUrl').select('name employeeCode userId role').sort({ name: 1 }).lean(),
       AttendanceModel.find({ workplaceId: workplace._id, attendanceDate: todayDate })
         .select('employeeMemberId status checkInTime checkOutTime approvedAt source verification').lean(),
       AttendanceRequestModel.find({ workplaceId: workplace._id, attendanceDate: todayDate, status: 'PENDING' })
@@ -79,6 +79,7 @@ export class AttendanceService {
 
       return {
         memberId: empId,
+        role: emp.role,
         name: emp.name,
         employeeCode: emp.employeeCode,
         avatarUrl: emp.userId?.avatarUrl || undefined,
