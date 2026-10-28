@@ -291,9 +291,10 @@ export class AttendanceRequestService {
       }
     }
 
-    // Retain workplace network verification for QR attendance requests.
+    // Direct and geofence punches verify location independently of office Wi-Fi.
+    const isLocationPunch = data.source === 'DIRECT' || data.source === 'GEOFENCE';
     let wifiVerified: boolean | null = null;
-    if (workplace.wifiSsid && data.deviceSsid) {
+    if (!isLocationPunch && workplace.wifiSsid && data.deviceSsid) {
       wifiVerified = workplace.wifiSsid.trim().toLowerCase() === data.deviceSsid.trim().toLowerCase();
     }
 
@@ -314,7 +315,7 @@ export class AttendanceRequestService {
     }
 
     // If geofence is strictly enforced by the workplace, validate employee coordinates:
-    if (requireGeofence || data.source === 'GEOFENCE' || data.source === 'DIRECT') {
+    if (requireGeofence || isLocationPunch) {
       if (wpLat == null || wpLng == null || !Number.isFinite(wpLat) || !Number.isFinite(wpLng) || !Number.isFinite(wpRadius) || wpRadius <= 0) {
         throw new AppError('Ask your employer to configure the office location and radius.', 400, 'OFFICE_LOCATION_NOT_CONFIGURED');
       }
@@ -334,10 +335,10 @@ export class AttendanceRequestService {
       }
     }
 
-    if (data.source === 'GEOFENCE' || data.source === 'DIRECT') {
+    if (isLocationPunch) {
       const maxAllowedAccuracy = Math.max(wpRadius * 1.5, 150);
       if (data.accuracy == null || !Number.isFinite(data.accuracy) || data.accuracy <= 0 || data.accuracy > maxAllowedAccuracy) {
-        throw new AppError('GPS accuracy is insufficient. Ensure Wi-Fi is on or move closer to the office and retry.', 400, 'LOCATION_INACCURATE');
+        throw new AppError('GPS accuracy is insufficient. Enable precise location or move to a clearer spot near the office and retry.', 400, 'LOCATION_INACCURATE');
       }
     }
 
@@ -345,7 +346,7 @@ export class AttendanceRequestService {
     const qrVerified = Boolean(data.qrToken);
     // Auto-approve if QR was scanned OR if employee is verified at the workplace geofence / direct office location! No employer approval needed!
     const isAutoApproved = qrVerified || geofenceVerified === true;
-    if (wpSettings.requireWifi && wifiVerified !== true) {
+    if (!isLocationPunch && wpSettings.requireWifi && wifiVerified !== true) {
       throw new AppError('Connect to the workplace Wi-Fi before punching.', 400, 'WIFI_REQUIRED');
     }
 

@@ -148,3 +148,36 @@ test('fresh verified office punch resolves a previous pending request', async ()
     assert.ok(result.attendance);
   } finally { mock.restoreAll(); }
 });
+
+for (const source of ['DIRECT', 'GEOFENCE'] as const) {
+  for (const requestType of ['CHECK_IN', 'CHECK_OUT'] as const) {
+    for (const deviceSsid of [undefined, 'Other network']) {
+      test(`${source} ${requestType} succeeds at office without office Wi-Fi (${deviceSsid ?? 'no SSID'})`, async () => {
+        fixture();
+        mock.method(WorkplaceModel, 'findById', async () => ({ ...workplace, wifiSsid: 'Office', attendanceSettings: { ...workplace.attendanceSettings, requireWifi: true } }));
+        if (requestType === 'CHECK_OUT') mock.method(AttendanceModel, 'findOne', async () => ({ _id: id, checkInTime: new Date() }));
+        mock.method(db.attendanceRequest, 'upsert', async (args: any) => ({ ...args.create, id }));
+        mock.method(db.attendance, 'findUnique', async () => ({ id, checkInTime: new Date() }));
+        let writes = 0;
+        mock.method(AttendanceModel, 'findOneAndUpdate', async () => { writes++; return { _id: id }; });
+        mock.method(NotificationOutboxModel, 'create', async () => ({}));
+        try {
+          const result = await service.submitRequest(id, { workplaceId: id, source, requestType, deviceSsid, latitude: 28.628, longitude: 77.3649, accuracy: 10 });
+          assert.equal(result.request?.status, 'APPROVED');
+          assert.equal(result.request?.verification.geofenceVerified, true);
+          assert.equal(result.request?.verification.wifiVerified, null);
+          assert.equal(writes, 1);
+        } finally { mock.restoreAll(); }
+      });
+    }
+  }
+}
+
+test('QR attendance retains the configured Wi-Fi requirement', async () => {
+  fixture();
+  mock.method(WorkplaceModel, 'findById', async () => ({ ...workplace, wifiSsid: 'Office', attendanceSettings: { ...workplace.attendanceSettings, requireWifi: true } }));
+  mock.method(AttendanceSessionModel, 'findOne', async () => ({ _id: id, id, workplaceId: id, status: 'OPEN', expiresAt: new Date(Date.now() + 60000), attendanceDate: '2026-10-28' }));
+  try {
+    await assert.rejects(service.submitRequest(id, { workplaceId: id, source: 'QR', qrToken: 'valid-session-token', latitude: 28.628, longitude: 77.3649, accuracy: 10 }), (e: any) => e.errorCode === 'WIFI_REQUIRED');
+  } finally { mock.restoreAll(); }
+});
