@@ -248,6 +248,9 @@ export class AttendanceService {
       attendanceDate: string;
       status: AttendanceStatus;
       correctionReason: string;
+      punchType?: 'CHECK_IN' | 'CHECK_OUT';
+      checkInTime?: string;
+      checkOutTime?: string;
     }
   ) {
     const member = await WorkplaceMemberModel.findOne({
@@ -260,6 +263,24 @@ export class AttendanceService {
     }
 
     const now = new Date();
+    const updateSet: any = {
+      status: data.status,
+      source: 'MANUAL',
+      approvedBy: new Types.ObjectId(actorId),
+      approvedAt: now,
+      correctionReason: data.correctionReason.trim(),
+    };
+
+    if (data.punchType === 'CHECK_IN' || data.checkInTime) {
+      updateSet.checkInTime = data.checkInTime ? new Date(data.checkInTime) : now;
+    }
+    if (data.punchType === 'CHECK_OUT' || data.checkOutTime) {
+      updateSet.checkOutTime = data.checkOutTime ? new Date(data.checkOutTime) : now;
+    }
+    if (data.status === 'LEAVE' || data.status === 'ABSENT') {
+      updateSet.checkInTime = null;
+      updateSet.checkOutTime = null;
+    }
 
     const attendance = await AttendanceModel.findOneAndUpdate(
       {
@@ -268,19 +289,13 @@ export class AttendanceService {
         attendanceDate: data.attendanceDate,
       },
       {
-        $set: {
-          status: data.status,
-          source: 'MANUAL',
-          approvedBy: new Types.ObjectId(actorId),
-          approvedAt: now,
-          correctionReason: data.correctionReason.trim(),
-        },
+        $set: updateSet,
         $setOnInsert: {
           workplaceId: new Types.ObjectId(workplaceId),
           employeeMemberId: member._id,
           userId: member.userId,
           attendanceDate: data.attendanceDate,
-          checkInTime: now,
+          checkInTime: data.punchType === 'CHECK_OUT' ? now : (updateSet.checkInTime || now),
           verification: { qr: false, wifi: null },
         },
       },

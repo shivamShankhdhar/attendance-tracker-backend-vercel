@@ -11,6 +11,9 @@ export const manualAttendanceSchema = z.object({
   attendanceDate: validDate,
   status: z.enum(['PRESENT', 'ABSENT', 'HALF_DAY', 'LEAVE']),
   correctionReason: z.string().min(3, 'A valid reason is required for manual attendance').max(200),
+  punchType: z.enum(['CHECK_IN', 'CHECK_OUT']).optional(),
+  checkInTime: z.string().optional(),
+  checkOutTime: z.string().optional(),
 });
 
 export const rosterQuerySchema = z.object({ date: validDate.optional() });

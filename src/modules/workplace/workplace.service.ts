@@ -331,307 +331,68 @@ export class WorkplaceService {
   /**
    * Helper to parse and decrypt join token from various scan formats
    */
-  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean; hasDirectJoinToken?: boolean }> {
-    let tokenStr = (rawInput || '').trim();
-    // Handle surrounding quotes
-    tokenStr = tokenStr.replace(/^["']|["']$/g, '').trim();
-
-    let extractedTeamCode: string | null = null;
-    let extractedToken: string | null = null;
-
-    // 1. Check for query parameters (?teamCode=, ?code=, ?token=, ?invite=, ?team=)
-    const tmParamMatch = tokenStr.match(/(?:teamCode|team)=([^&\s#"']+)/i);
-    if (tmParamMatch) {
-      extractedTeamCode = decodeURIComponent(tmParamMatch[1]).replace(/^#+/, '').trim();
-    }
-    const tokenParamMatch = tokenStr.match(/(?:token|code|invite)=([^&\s#"']+)/i);
-    if (tokenParamMatch) {
-      extractedToken = decodeURIComponent(tokenParamMatch[1]).replace(/^#+/, '').trim();
-    }
-
-    // 2. Check for embedded URLs (http, https, bizora)
-    const embeddedUrlMatch = tokenStr.match(/(?:https?:\/\/|bizora:\/\/)[^\s"']+/i);
-    if (embeddedUrlMatch) {
-      try {
-        const rawUrl = embeddedUrlMatch[0];
-        const normalized = rawUrl.replace(/^[a-zA-Z0-9+-.]+:\/\//, 'http://dummy/');
-        const parsedUrl = new URL(normalized);
-        const qTm = parsedUrl.searchParams.get('teamCode') || parsedUrl.searchParams.get('team');
-        if (qTm) extractedTeamCode = qTm.replace(/^#+/, '').trim();
-        const qTok = parsedUrl.searchParams.get('token') || parsedUrl.searchParams.get('code') || parsedUrl.searchParams.get('invite');
-        if (qTok) extractedToken = qTok.replace(/^#+/, '').trim();
-
-        if (!extractedTeamCode && !extractedToken) {
-          const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
-          const lastPart = pathParts[pathParts.length - 1];
-          if (lastPart && lastPart.toLowerCase() !== 'join' && lastPart.toLowerCase() !== 'dummy') {
-            tokenStr = decodeURIComponent(lastPart).replace(/^#+/, '').trim();
-          }
-        }
-      } catch { /* Continue */ }
-    }
-
-    // 3. Handle JSON payload (e.g. from QR scan)
-    if (tokenStr.startsWith('{') && tokenStr.endsWith('}')) {
-      try {
-        const parsed = JSON.parse(tokenStr);
-        if (parsed.teamCode) extractedTeamCode = String(parsed.teamCode).replace(/^#+/, '').trim();
-        if (parsed.token) extractedToken = String(parsed.token).replace(/^#+/, '').trim();
-        if (parsed.code && !extractedToken) extractedToken = String(parsed.code).replace(/^#+/, '').trim();
-      } catch {
-        // Continue
-      }
-    }
-
-    // If an explicit teamCode was extracted from link/message/JSON:
-    if (extractedTeamCode) {
-      const cleanTeamLookup = extractedTeamCode.toUpperCase();
-      const teamMatch = await TeamModel.findOne({ teamCode: cleanTeamLookup });
-      if (teamMatch) {
-        const wp = await WorkplaceModel.findById(teamMatch.workplaceId);
-        if (wp && wp.status === 'ACTIVE') {
-          let hasDirectJoinToken = false;
-          if (extractedToken) {
-            const cleanTok = extractedToken.toUpperCase();
-            const wpCode = formatWorkplaceCode(wp).toUpperCase();
-            if (
-              wp.joinInviteToken &&
-              extractedToken.toLowerCase() === wp.joinInviteToken.toLowerCase()
-            ) {
-              if (wp.joinInviteExpiresAt && new Date(wp.joinInviteExpiresAt) < new Date()) {
-                throw new AppError('This invite link has expired. Please ask the employer for a new link.', 400, 'EXPIRED_INVITE');
-              }
-              hasDirectJoinToken = true;
-            } else if (
-              cleanTok === wpCode ||
-              cleanTok === wp._id.toString().toUpperCase() ||
-              (wp.joinQrSecret && extractedToken === wp.joinQrSecret)
-            ) {
-              hasDirectJoinToken = true;
-            }
-          } else {
-            hasDirectJoinToken = true;
-          }
-          return {
-            workplaceId: wp._id.toString(),
-            teamId: teamMatch._id.toString(),
-            secret: wp.joinQrSecret,
-            hasDirectJoinToken,
-            isCodeLookup: true,
-          };
-        }
-      }
-    }
-
-    // 4. Strip leading '#' and clean whitespace for fallback lookup
-    tokenStr = tokenStr.replace(/^#+/, '').trim();
-
-    // 5. Look for standard Workplace Code format (BWP-1234-567) or Team Code (TM...) if still embedded in text
-    const bwpMatch = tokenStr.match(/\b(BWP-[0-9]{4}-[0-9]{3})\b/i);
-    if (bwpMatch) {
-      tokenStr = bwpMatch[1].toUpperCase();
-    } else {
-      const tmMatch = tokenStr.match(/\b([A-Za-z]{2}[0-9A-Za-z]{5,8})\b/);
-      if (tmMatch && !tokenStr.startsWith('http')) {
-        const candidate = tmMatch[1].toUpperCase();
-        if (candidate.startsWith('TM') || candidate.startsWith('WP') || candidate.startsWith('EM')) {
-          tokenStr = candidate;
-        }
-      }
-    }
-
-    // 0a. Direct lookup in WorkplaceModel (matches active workplace invite token or workplace code)
-    const directWorkplace = await WorkplaceModel.findOne({
-      $or: [
-        { workplaceCode: tokenStr.toUpperCase() },
-        { joinInviteToken: tokenStr.toLowerCase() },
-        { joinInviteToken: tokenStr },
-      ],
-      status: 'ACTIVE',
-    });
-    if (directWorkplace) {
-      const isInviteToken =
-        Boolean(directWorkplace.joinInviteToken) &&
-        (tokenStr.toLowerCase() === directWorkplace.joinInviteToken?.toLowerCase());
-
-      if (isInviteToken) {
-        if (directWorkplace.joinInviteExpiresAt && new Date(directWorkplace.joinInviteExpiresAt) < new Date()) {
-          throw new AppError('This invite link has expired. Please ask the employer for a new link.', 400, 'EXPIRED_INVITE');
-        }
-        return {
-          workplaceId: directWorkplace._id.toString(),
-          secret: directWorkplace.joinQrSecret,
-          isCodeLookup: true,
-          hasDirectJoinToken: true,
-        };
-      }
-
-      return {
-        workplaceId: directWorkplace._id.toString(),
-        secret: directWorkplace.joinQrSecret,
-        isCodeLookup: true,
-        hasDirectJoinToken: false,
-      };
-    }
-
-    // 0a-2. Direct lookup in TeamModel by unique 7-8 character teamCode or id (without token)
-    const cleanTeamLookup = tokenStr.replace(/^#/, '').toUpperCase();
-    const teamMatch = await TeamModel.findOne({
-      $or: [
-        { teamCode: cleanTeamLookup },
-        { _id: tokenStr },
-        { id: tokenStr },
-      ].filter(Boolean)
-    });
-    if (teamMatch) {
-      const wp = await WorkplaceModel.findById(teamMatch.workplaceId);
-      if (wp && wp.status === 'ACTIVE') {
-        return {
-          workplaceId: wp._id.toString(),
-          teamId: teamMatch._id.toString(),
-          secret: wp.joinQrSecret,
-          hasDirectJoinToken: true,
-          isCodeLookup: true,
-        };
-      }
-    }
-
-    // 0b. Direct lookup in WorkplaceMemberModel for exact invitation code or hash
-    const directMember = await WorkplaceMemberModel.findOne({
-      status: 'INVITED',
-      $or: [
-        { invitationCode: tokenStr.toLowerCase() },
-        { invitationCode: tokenStr },
-        { invitationTokenHash: hashToken(tokenStr.toLowerCase()) },
-        { invitationTokenHash: hashToken(tokenStr) },
-      ],
-    });
-    if (directMember) {
-      if (directMember.invitationExpiresAt && new Date(directMember.invitationExpiresAt) < new Date()) {
-        throw new AppError('This invitation has expired.', 400, 'EXPIRED_INVITE');
-      }
-      const wp = await WorkplaceModel.findById(directMember.workplaceId);
-      if (wp) {
-        return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true, hasDirectJoinToken: true };
-      }
-    }
-
-    // Check if token has structured employee invite format:
-    // {workplaceId}-{employeeId} (10 chars e.g. e912-be91c) or legacy {wpId}-{empId}-{timestamp}
-    const tokenParts = tokenStr.split('-');
-    if (tokenParts.length === 2) {
-      const [wpPart, empPart] = tokenParts;
-      const member = await WorkplaceMemberModel.findOne({
-        status: 'INVITED',
-        $and: [
-          {
-            $or: [
-              { invitationCode: tokenStr.toLowerCase() },
-              { invitationTokenHash: hashToken(tokenStr.toLowerCase()) },
-              { invitationTokenHash: hashToken(tokenStr) },
-              {
-                $expr: {
-                  $and: [
-                    { $regexMatch: { input: { $toString: '$_id' }, regex: `${empPart}$`, options: 'i' } },
-                    { $regexMatch: { input: { $toString: '$workplaceId' }, regex: `${wpPart}$`, options: 'i' } },
-                  ],
-                },
-              },
-            ],
-          },
-          {
-            $or: [
-              { invitationExpiresAt: { $gt: new Date() } },
-              { invitationExpiresAt: { $exists: false } },
-            ],
-          },
-        ],
-      });
-      if (member) {
-        const wp = await WorkplaceModel.findById(member.workplaceId);
-        if (wp) {
-          return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
-        }
-      }
-    } else if (tokenParts.length >= 3) {
-      const [wpId, empId] = tokenParts;
-      const member = await WorkplaceMemberModel.findOne({
-        _id: toId(empId),
-        workplaceId: toId(wpId),
-        status: 'INVITED',
-        $or: [
-          { invitationExpiresAt: { $gt: new Date() } },
-          { invitationExpiresAt: { $exists: false } },
-        ],
-      });
-      if (member) {
-        const wp = await WorkplaceModel.findById(member.workplaceId);
-        if (wp) {
-          return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
-        }
-      }
-      const directWp = await WorkplaceModel.findById(wpId);
-      if (directWp) {
-        return { workplaceId: directWp._id.toString(), secret: directWp.joinQrSecret, isCodeLookup: true };
-      }
-    }
-
-    if (/^[a-f0-9]{64}$/.test(tokenStr)) {
-      const invited = await WorkplaceModel.findOne({ joinInviteToken: tokenStr });
-      if (!invited) throw new AppError('This invitation is invalid or has been replaced.', 404, 'INVALID_QR_TOKEN');
-      if (invited.joinInviteExpiresAt && new Date(invited.joinInviteExpiresAt) < new Date()) {
-        throw new AppError('This invite link has expired. Please ask the employer for a new link.', 400, 'EXPIRED_INVITE');
-      }
-      return { workplaceId: invited._id.toString(), secret: invited.joinQrSecret, hasDirectJoinToken: true };
-    }
-
-    // Check if token matches an employee-specific invitation token
-    const memberInvite = await WorkplaceMemberModel.findOne({
-      $or: [
-        { invitationTokenHash: hashToken(tokenStr) },
-        { invitationTokenHash: tokenStr },
-      ],
-      invitationExpiresAt: { $gt: new Date() },
-    });
-    if (memberInvite) {
-      const wp = await WorkplaceModel.findById(memberInvite.workplaceId);
-      if (wp) {
-        return { workplaceId: wp._id.toString(), secret: wp.joinQrSecret, isCodeLookup: true };
-      }
-    }
-
-    // 1. Try decrypting as standard encrypted QR/join token
+  private async parseJoinToken(rawInput: string): Promise<{ workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean; hasDirectJoinToken?: boolean; invitationMemberId?: string; consumesInvite?: boolean; joinMethod?: string }> {
+    let token = rawInput.trim().replace(/^["']|["']$/g, '').trim();
+    let teamCode: string | undefined;
     try {
-      const decrypted = decryptToken(tokenStr);
-      const data = JSON.parse(decrypted);
-      if (data.type === 'WORKPLACE_JOIN' && data.workplaceId) {
-        return { workplaceId: data.workplaceId, secret: data.secret };
+      if (token.startsWith('{')) {
+        const payload = JSON.parse(token);
+        teamCode = payload.teamCode;
+        token = payload.token || payload.code || teamCode || '';
+      } else if (/^(https?:|bizora:)\/\//i.test(token)) {
+        const url = new URL(token);
+        teamCode = url.searchParams.get('teamCode') || undefined;
+        token = url.searchParams.get('token') || url.searchParams.get('invite') || url.searchParams.get('code') ||
+          decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
+        if (!token || token === 'join' || token === 'invite') token = teamCode || '';
       }
     } catch {
-      // Fall through to 6-char code / ID matching
+      throw new AppError('Invalid invite link or QR code.', 400, 'INVALID_QR_TOKEN');
     }
+    token = token.trim().replace(/^#+/, '');
+    if (!token) throw new AppError('Enter a team code or use an invite link.', 400, 'TEAM_CODE_REQUIRED');
 
-    // 2. If token is in hyphen invite format, it did not match any active invite token - reject as expired/invalid
-    if (tokenStr.includes('-')) {
-      throw new AppError('This invite link is expired or was rotated. Ask the employer for a new link.', 400, 'EXPIRED_INVITE');
-    }
-
-    // 3. Try looking up by 6-char workplace code suffix or ObjectId / CUID
-    const cleanCode = tokenStr.replace(/[^a-zA-Z0-9]/g, '');
-    if (cleanCode.length === 6 && /^[a-fA-F0-9]{6}$/.test(cleanCode)) {
-      const activeWorkplaces = await WorkplaceModel.find({ status: 'ACTIVE' });
-      const matched = activeWorkplaces.find((w) => w._id.toString().toLowerCase().endsWith(cleanCode.toLowerCase()));
-      if (matched) {
-        return { workplaceId: matched._id.toString(), isCodeLookup: true };
+    // Only actual team codes identify teams. Workplace codes, IDs and ID suffixes are not join credentials.
+    const team = await TeamModel.findOne({ teamCode: token.toUpperCase() });
+    let result: { workplaceId: string; teamId?: string; secret?: string; isCodeLookup?: boolean; hasDirectJoinToken?: boolean; invitationMemberId?: string; consumesInvite?: boolean; joinMethod?: string };
+    if (team) {
+      result = { workplaceId: toId(team.workplaceId), teamId: toId(team._id), isCodeLookup: true, hasDirectJoinToken: true, joinMethod: 'TEAM_CODE' };
+    } else {
+      const workplace = await WorkplaceModel.findOne({ joinInviteToken: token });
+      if (workplace) {
+        if (workplace.joinInviteExpiresAt && new Date(workplace.joinInviteExpiresAt) <= new Date()) {
+          throw new AppError('This invite link has expired. Ask your employer for a new link.', 400, 'EXPIRED_INVITE');
+        }
+        result = { workplaceId: toId(workplace._id), isCodeLookup: true, hasDirectJoinToken: true, consumesInvite: true, joinMethod: 'INVITE' };
+      } else {
+        const member = await WorkplaceMemberModel.findOne({ status: 'INVITED', $or: [
+          { invitationCode: token }, { invitationTokenHash: hashToken(token) },
+        ] });
+        if (member) {
+          if (member.invitationExpiresAt && new Date(member.invitationExpiresAt) <= new Date()) {
+            throw new AppError('This invitation has expired.', 400, 'EXPIRED_INVITE');
+          }
+          result = { workplaceId: toId(member.workplaceId), teamId: member.teamId ? toId(member.teamId) : undefined,
+            invitationMemberId: toId(member._id), isCodeLookup: true, hasDirectJoinToken: true, joinMethod: 'EMPLOYEE_INVITE' };
+        } else {
+          let payload: any;
+          try { payload = JSON.parse(decryptToken(token)); } catch { /* Invalid credential. */ }
+          if (!payload || payload.type !== 'WORKPLACE_JOIN' || !payload.workplaceId || !payload.secret) {
+            throw new AppError('Enter a valid team code or use an active invite link. Workplace codes cannot be used to join.', 400, 'TEAM_CODE_REQUIRED');
+          }
+          result = { workplaceId: payload.workplaceId, secret: payload.secret, hasDirectJoinToken: true, joinMethod: 'INVITE' };
+        }
       }
-    } else if (cleanCode) {
-      const matched = await WorkplaceModel.findOne({ _id: cleanCode, status: 'ACTIVE' });
-      if (matched) {
-        return { workplaceId: matched._id.toString(), isCodeLookup: true };
-      }
     }
-
-    throw new AppError('Invalid or unreadable invite link or code. Make sure you have the correct workplace invite.', 400, 'INVALID_QR_TOKEN');
+    // A team query parameter must never bypass an expired token or select a different workplace.
+    if (teamCode) {
+      const target = await TeamModel.findOne({ teamCode: teamCode.trim().toUpperCase() });
+      if (!target || toId(target.workplaceId) !== result.workplaceId || (result.teamId && result.teamId !== toId(target._id))) {
+        throw new AppError('The invite team does not match this invitation.', 400, 'INVITE_TEAM_MISMATCH');
+      }
+      result.teamId = toId(target._id);
+    }
+    return result;
   }
 
   /**
@@ -766,7 +527,7 @@ export class WorkplaceService {
    * Preview workplace details before requesting to join (Employee side)
    */
   private async resolveJoinWorkplace(rawToken: string) {
-    const { workplaceId, teamId, secret, isCodeLookup, hasDirectJoinToken } = await this.parseJoinToken(rawToken);
+    const { workplaceId, teamId, secret, isCodeLookup, hasDirectJoinToken, invitationMemberId, consumesInvite, joinMethod } = await this.parseJoinToken(rawToken);
 
     const workplace: any = await WorkplaceModel.findById(workplaceId);
     if (!workplace || workplace.status !== 'ACTIVE') {
@@ -785,6 +546,9 @@ export class WorkplaceService {
       workplace.targetTeamId = teamId;
     }
     workplace.hasDirectJoinToken = Boolean(hasDirectJoinToken);
+    workplace.invitationMemberId = invitationMemberId;
+    workplace.consumesInvite = Boolean(consumesInvite);
+    workplace.joinMethod = joinMethod;
 
     return workplace;
   }
@@ -844,7 +608,7 @@ export class WorkplaceService {
       targetTeam = await TeamModel.findById((workplace as any).targetTeamId).select('name teamCode color');
     }
 
-    const hasDirectJoinToken = Boolean((workplace as any).hasDirectJoinToken) || true;
+    const hasDirectJoinToken = Boolean((workplace as any).hasDirectJoinToken);
     const canJoinDirectly = true;
 
     // If user is unauthenticated (e.g. previewing on sign-in screen before logging in)
@@ -1001,6 +765,9 @@ export class WorkplaceService {
       status: 'ACTIVE',
     });
     if (existingMember) {
+      if (workplace.targetTeamId && toId(existingMember.teamId) !== workplace.targetTeamId) {
+        throw new AppError('You already belong to another team in this workplace. Ask your employer to move you.', 400, 'ALREADY_IN_ANOTHER_TEAM');
+      }
       // Clean up any stale pending requests for this active member
       await WorkplaceJoinRequestModel.updateMany(
         { workplaceId: workplace._id, userId: user._id, status: 'PENDING' },
@@ -1029,45 +796,22 @@ export class WorkplaceService {
       status: 'INVITED',
     });
 
-    if (!invitedMember && data.token) {
-      const cleanToken = data.token.trim();
-      const parts = cleanToken.split('-');
-      if (parts.length === 2) {
-        const [wpPart, empPart] = parts;
-        invitedMember = await WorkplaceMemberModel.findOne({
-          workplaceId: workplace._id,
-          $or: [
-            { invitationCode: cleanToken.toLowerCase() },
-            { invitationTokenHash: hashToken(cleanToken.toLowerCase()) },
-            {
-              $expr: {
-                $regexMatch: { input: { $toString: '$_id' }, regex: `${empPart}$`, options: 'i' },
-              },
-            },
-          ],
-          status: 'INVITED',
-        });
-      } else if (parts.length >= 3) {
-        invitedMember = await WorkplaceMemberModel.findOne({
-          _id: toId(parts[1]),
-          workplaceId: workplace._id,
-          status: 'INVITED',
-        });
-      }
-      if (!invitedMember) {
-        invitedMember = await WorkplaceMemberModel.findOne({
-          workplaceId: workplace._id,
-          $or: [
-            { invitationCode: cleanToken.toLowerCase() },
-            { invitationTokenHash: hashToken(cleanToken.toLowerCase()) },
-            { invitationTokenHash: hashToken(cleanToken) },
-          ],
-          status: 'INVITED',
-        });
-      }
+    if (workplace.invitationMemberId) {
+      invitedMember = await WorkplaceMemberModel.findOne({ _id: workplace.invitationMemberId, workplaceId: workplace._id, status: 'INVITED' });
+      if (!invitedMember) throw new AppError('This invitation is no longer available.', 400, 'EXPIRED_INVITE');
     }
 
     if (invitedMember) {
+      if (invitedMember.invitationExpiresAt && new Date(invitedMember.invitationExpiresAt) <= new Date()) {
+        throw new AppError('This invitation has expired.', 400, 'EXPIRED_INVITE');
+      }
+      if (invitedMember.invitedEmail && invitedMember.invitedEmail.toLowerCase() !== user.email?.toLowerCase()) {
+        throw new AppError('Sign in with the email address this invitation was sent to.', 403, 'INVITE_EMAIL_MISMATCH');
+      }
+      if (workplace.targetTeamId && invitedMember.teamId && toId(invitedMember.teamId) !== workplace.targetTeamId) {
+        throw new AppError('Your existing invitation is for a different team. Ask your employer to update it.', 400, 'INVITE_TEAM_MISMATCH');
+      }
+      if (workplace.targetTeamId) invitedMember.teamId = toId(workplace.targetTeamId);
       invitedMember.userId = user._id;
       invitedMember.status = 'ACTIVE';
       invitedMember.joinedAt = new Date();
@@ -1127,22 +871,25 @@ export class WorkplaceService {
       { $set: { status: 'APPROVED', reviewedAt: new Date() } }
     );
 
-    // CONSUME AND ROTATE THE INVITE LINK IMMEDIATELY SO IT CANNOT BE REUSED!
-    const newShortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
-    const newExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours dedicated time window
-    await WorkplaceModel.updateOne(
-      { _id: workplace._id },
-      {
-        $set: {
-          joinInviteToken: newShortToken,
-          joinInviteExpiresAt: newExpiresAt,
-          joinShareUrl: undefined,
-        },
-        $pull: {
-          previousJoinTokens: workplace.joinInviteToken,
-        },
-      }
-    );
+    // Team-code joins must not invalidate an unrelated workplace invite.
+    if (workplace.consumesInvite) {
+      const newShortToken = await this.generateShortWorkplaceInviteCode(workplace._id.toString());
+      const newExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours dedicated time window
+      await WorkplaceModel.updateOne(
+        { _id: workplace._id },
+        {
+          $set: {
+            joinInviteToken: newShortToken,
+            joinInviteExpiresAt: newExpiresAt,
+            joinShareUrl: undefined,
+          },
+          $pull: {
+            previousJoinTokens: workplace.joinInviteToken,
+          },
+        }
+      );
+
+    }
 
     await AuditLogModel.create({
       workplaceId: workplace._id,
@@ -1153,7 +900,7 @@ export class WorkplaceService {
         name: user.name,
         email: user.email,
         teamId: assignedTeamId?.toString(),
-        consumedToken: workplace.joinInviteToken,
+        joinMethod: workplace.joinMethod,
       },
     });
 
